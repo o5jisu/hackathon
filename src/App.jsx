@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   createLandmarkers, toPixels, toFrame, frameRect, mirror, bodyFrame, normalize, compare, adviceFor,
-  TARGETS, HEAD_PTS, compareHead, headAdvice, MATCH_T, statsOf, matchColor, blendImages, toAnalysisCanvas, smoothPoints,
+  TARGETS, HEAD_PTS, BONES, compareHead, headAdvice, MATCH_T, statsOf, matchColor, blendImages, toAnalysisCanvas, smoothPoints,
 } from './pose'
 import './App.css'
 
@@ -27,6 +27,7 @@ export default function App() {
   const [videoAspect, setVideoAspect] = useState(9 / 16) // 카메라 영상 가로/세로 비율 (영상이 오면 실제 값으로 바뀜)
   const [align, setAlign] = useState(NO_ALIGN) // 참고 사진 틀 크기·위치 (끌기·두 손가락으로 조절)
   const [cropToRef, setCropToRef] = useState(true) // 촬영 사진을 참고 사진 틀에 맞춰 자를지
+  const [stream, setStream] = useState(null) // 켜져 있는 카메라 영상
 
   const models = useRef(null)
   const refImg = useRef(null)
@@ -86,11 +87,8 @@ export default function App() {
       audio: false,
     })
     setFacing(mode)
+    setStream(stream)
     setScreen('coaching')
-    requestAnimationFrame(() => {
-      videoRef.current.srcObject = stream
-      videoRef.current.play()
-    })
     // 권한을 받은 뒤에야 카메라 목록을 정확히 알 수 있음
     const devices = await navigator.mediaDevices.enumerateDevices()
     setCanSwitch(devices.filter((d) => d.kind === 'videoinput').length > 1)
@@ -115,9 +113,16 @@ export default function App() {
   }
 
   function stopCamera() {
-    const s = videoRef.current?.srcObject
-    s?.getTracks().forEach((t) => t.stop())
+    stream?.getTracks().forEach((t) => t.stop())
   }
+
+  // 코칭 화면의 <video>가 실제로 생긴 뒤에 카메라 영상을 연결 (아이폰에서 연결 시점이 빠르면 화면이 검게 나옴)
+  useEffect(() => {
+    const video = videoRef.current
+    if (screen !== 'coaching' || !video || !stream) return
+    video.srcObject = stream
+    video.play().catch((e) => setMessage('카메라 화면을 재생할 수 없어요. (' + e.name + ')'))
+  }, [screen, stream])
 
   // 4) 실시간 코칭 루프 (자동 촬영 없음: 셔터 버튼을 눌러야 찍힘). 카메라를 바꾸면 처음부터 다시 시작
   useEffect(() => {
@@ -155,9 +160,11 @@ export default function App() {
       const onScreen = (p) => ({ x: (r.x + (p.x / fw) * r.w) * bw, y: (r.y + (p.y / fh) * r.h) * bh, v: p.v })
 
       // 참고 사진 속 인물의 관절 위치에 기준점(흰 테두리) 표시 → 사진을 옮기면 같이 움직임
-      drawRefPoints(ctx, withMouth(refPts.current.map(onScreen)))
+      drawRefSkeleton(ctx, withMouth(refPts.current.map(onScreen)))
 
-      const res = models.current.video.detectForVideo(video, now)
+      let res
+      try { res = models.current.video.detectForVideo(video, now) }
+      catch (e) { show('포즈 분석 오류: ' + e.message, 0); return } // 폰에서 원인을 바로 볼 수 있게 화면에 표시
       const lms = res.landmarks?.[0]
       if (!lms) { smoothed = null; show('화면 안으로 들어와 주세요', 0); return }
 
@@ -206,11 +213,8 @@ export default function App() {
         }
         for (const j of [...HEAD_PTS, MOUTH]) state[j] = headState
       }
-      const colorOf = (j) =>
-        state[j] === 'ok' ? '#22c55e' : state[j] === 'bad' ? '#ef4444' : 'rgba(200,200,200,0.6)'
-      drawLivePoints(ctx, withMouth(live.map(onScreen)), colorOf)
-
       const pct = total ? Math.round((ok / total) * 100) : 0
+      drawLiveSkeleton(ctx, withMouth(live.map(onScreen)), (j) => state[j], total > 0 && ok === total)
       if (total === 0) show('참고 사진에 팔다리가 잘 보이지 않아요', 0)
       else if (hidden > 0 && worst === null) show('전신이 화면에 나오도록 한 걸음 물러나 보세요', pct)
       else if (worst === 'head') show(headAdvice(headAxis, headEma[headAxis], mirrored), pct)
@@ -320,7 +324,7 @@ export default function App() {
   }
 
   // ── 화면 ──
-  const borderColor = score >= 100 ? '#22c55e' : score >= 60 ? '#eab308' : '#ef4444'
+  const scoreColor = score >= 100 ? '#22c55e' : score >= 60 ? '#facc15' : '#fff'
   // 참고 사진 틀 위치 (카메라 상자 대비 %). 카메라 루프의 관절 좌표와 같은 frameRect 계산을 씀
   const fr = frameRect(refAspect, videoAspect, align)
   const frameStyle = { left: `${fr.x * 100}%`, top: `${fr.y * 100}%`, width: `${fr.w * 100}%`, height: `${fr.h * 100}%` }
@@ -345,12 +349,12 @@ export default function App() {
       )}
 
       {screen === 'coaching' && (
-        <section className="stage" style={{ borderColor }}>
+        <section className="stage">
           {/* 카메라 상자 = 영상 비율 그대로(잘림 없음). 그 위의 참고 사진 틀 = 촬영 후 잘릴 영역 (끌기·두 손가락으로 조절) */}
           <div className="camera" style={{ '--va': videoAspect }}
             onPointerDown={onPointerDown} onPointerMove={onPointerMove}
             onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
-            <video ref={videoRef} playsInline muted className={facing === 'user' ? 'mirrored' : ''} />
+            <video ref={videoRef} autoPlay playsInline muted className={facing === 'user' ? 'mirrored' : ''} />
             <div className="frame" style={frameStyle}>
               {/* 흐림·투명도는 참고 사진에만 적용 (카메라·관절점은 선명하게) */}
               <img className="ref-overlay" src={refUrl} alt="" draggable={false} style={{ opacity: refOpacity }} />
@@ -361,7 +365,7 @@ export default function App() {
 
           {/* 위: 안내 한 줄만 */}
           <div className="topbar">
-            <b>{score}%</b> {message || '준비 중…'}
+            <b style={{ color: scoreColor }}>{score}%</b> {message || '준비 중…'}
           </div>
 
           {/* 설정: 평소엔 접어 두고 ⚙ 버튼을 누를 때만 펼침 */}
@@ -384,8 +388,8 @@ export default function App() {
                 {canSwitch && <button onClick={switchCamera}>{facing === 'user' ? '뒤 카메라' : '앞 카메라'}</button>}
               </div>
               <div className="legend">
-                <span><i className="dot ref" />참고 사진 기준 위치</span>
-                <span><i className="dot ok" />초록색: 기준 위치에 가까움</span>
+                <span><i className="dot ref" />흰 점선: 참고 사진 포즈</span>
+                <span><i className="dot ok" />초록색: 기준 위치에 가까움 (모두 맞으면 뼈대 전체가 초록)</span>
                 <span><i className="dot bad" />빨간색: 위치를 조정해 보세요</span>
               </div>
             </div>
@@ -393,11 +397,11 @@ export default function App() {
 
           {/* 아래: 설정 · 셔터 · 닫기 */}
           <div className="bottombar">
-            <button className="round" onClick={() => setShowSettings((v) => !v)} aria-label="설정">
+            <button className="round glass" onClick={() => setShowSettings((v) => !v)} aria-label="설정">
               {showSettings ? '✕' : '⚙'}
             </button>
             <button className="shutter" onClick={capture} aria-label="촬영" />
-            <button className="round" onClick={() => { stopCamera(); setShowSettings(false); setScreen('upload') }} aria-label="그만하기">
+            <button className="round glass" onClick={() => { stopCamera(); setShowSettings(false); setScreen('upload') }} aria-label="그만하기">
               ⏏
             </button>
           </div>
@@ -458,22 +462,56 @@ const withMouth = (ps) => [...ps, { x: (ps[9].x + ps[10].x) / 2, y: (ps[9].y + p
 const DRAWN = [0, MOUTH, ...TARGETS]
 const isHead = (j) => j === 0 || j === MOUTH
 
-// 기준점: 흰 테두리 동그라미 (중립색)
-function drawRefPoints(ctx, pts) {
-  for (const j of DRAWN) {
-    if (pts[j].v < 0.5) continue
-    ctx.beginPath(); ctx.arc(pts[j].x, pts[j].y, isHead(j) ? 6 : 11, 0, Math.PI * 2)
-    ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.stroke()
-    ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.stroke()
-  }
+// 뼈대: 팔·다리·몸통 선 + 얼굴(코–입) 선. 어깨·골반은 선을 잇기 위해 점도 그림
+const SKELETON = [...BONES, [0, MOUTH]]
+const TORSO = [11, 12, 23, 24]
+const COLOR = { ok: '#22c55e', bad: '#ef4444', idle: 'rgba(255,255,255,0.85)' }
+
+// 선 하나의 색: 판정한 끝점 중 하나라도 틀리면 빨강, 판정한 끝점이 모두 맞으면 초록.
+// 어깨·골반끼리 잇는 몸통 선은 판정 대상이 없으므로, 포즈 전체가 맞을 때만 초록
+function boneColor(a, b, stateOf, allOk) {
+  const s = [stateOf(a), stateOf(b)].filter((x) => x === 'ok' || x === 'bad')
+  if (s.includes('bad')) return COLOR.bad
+  if (s.length) return COLOR.ok
+  return allOk ? COLOR.ok : COLOR.idle
 }
 
-// 내 관절점: 초록(맞음) / 빨강(조정 필요) / 회색(판단 보류). 기준점 안에 쏙 들어가는 크기
-function drawLivePoints(ctx, pts, colorOf) {
-  for (const j of DRAWN) {
-    if (pts[j].v < 0.5) continue
-    ctx.beginPath(); ctx.arc(pts[j].x, pts[j].y, isHead(j) ? 3.5 : 7, 0, Math.PI * 2)
-    ctx.fillStyle = colorOf(j); ctx.fill()
-    ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.stroke()
+// 참고 포즈: 흰 점선 뼈대 + 속이 빈 원 (내 뼈대와 구분되도록 얇고 반투명하게)
+function drawRefSkeleton(ctx, pts) {
+  const seen = (j) => pts[j].v >= 0.5
+  ctx.save()
+  ctx.setLineDash([6, 6]); ctx.lineCap = 'round'
+  ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.7)'
+  for (const [a, b] of SKELETON) {
+    if (!seen(a) || !seen(b)) continue
+    ctx.beginPath(); ctx.moveTo(pts[a].x, pts[a].y); ctx.lineTo(pts[b].x, pts[b].y); ctx.stroke()
   }
+  ctx.setLineDash([])
+  for (const j of [...DRAWN, ...TORSO]) {
+    if (!seen(j)) continue
+    ctx.beginPath(); ctx.arc(pts[j].x, pts[j].y, isHead(j) ? 5 : 9, 0, Math.PI * 2)
+    ctx.lineWidth = 2.5; ctx.stroke()
+  }
+  ctx.restore()
+}
+
+// 내 포즈: 실선 뼈대 + 꽉 찬 점. 맞으면 초록, 조정이 필요하면 빨강, 판정 전이면 흰색
+function drawLiveSkeleton(ctx, pts, stateOf, allOk) {
+  const seen = (j) => pts[j].v >= 0.5
+  const pointColor = (j) => COLOR[stateOf(j)] ?? (allOk ? COLOR.ok : COLOR.idle)
+  ctx.save()
+  ctx.lineCap = 'round'
+  for (const [a, b] of SKELETON) {
+    if (!seen(a) || !seen(b)) continue
+    ctx.beginPath(); ctx.moveTo(pts[a].x, pts[a].y); ctx.lineTo(pts[b].x, pts[b].y)
+    ctx.lineWidth = 7; ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.stroke() // 밝은 배경에서도 보이게 그림자
+    ctx.lineWidth = 4; ctx.strokeStyle = boneColor(a, b, stateOf, allOk); ctx.stroke()
+  }
+  for (const j of [...DRAWN, ...TORSO]) {
+    if (!seen(j)) continue
+    ctx.beginPath(); ctx.arc(pts[j].x, pts[j].y, isHead(j) ? 3.5 : 6, 0, Math.PI * 2)
+    ctx.fillStyle = pointColor(j); ctx.fill()
+    ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.stroke()
+  }
+  ctx.restore()
 }
