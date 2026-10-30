@@ -276,11 +276,13 @@ export function getSegmenter() {
 }
 
 // selfie_multiclass 모델의 부위 번호: 0 배경, 1 머리카락, 2 몸 피부, 3 얼굴 피부, 4 옷, 5 기타(소품)
-// 보호 영역 = 배경이 아닌 곳 전부(머리카락·피부·얼굴·옷·소품) → 색감 보정을 전혀 적용하지 않고 배경만 참고 사진 색감으로
-// (머리카락을 빼면 파란 참고 사진에서 머리가 파랗게 물들어서 사람 전체를 보호함)
+// 부위별 보호 정도(1이면 색감을 전혀 안 입힘). 사람을 100% 보호하면 인물이 큰 사진은 거의 안 바뀌어서(사용자 피드백)
+// 인물에도 약하게 입힘: 옷·소품 60%, 머리카락 40%, 얼굴·피부 20%. 머리·피부를 세게 입히면 파란 참고 사진에서 파랗게 물듦
 const BACKGROUND = 0
+const PROTECT = [0, 0.6, 0.8, 0.8, 0.4, 0.4]
 
-// 보호 영역일 확률 지도 { data: 0~1, w, h }. 작게 줄인 사본으로 계산(빠름)하고, 쓸 때 위치 비율로 찾아봄
+// 보호 지도 { data: 보호 정도 0~1 (보정에 씀), person: 사람일 확률 0~1 (색 통계에서 뺄 곳), w, h }
+// 작게 줄인 사본으로 계산(빠름)하고, 쓸 때 위치 비율로 찾아봄
 export function skinMaskOf(segmenter, img, max = 512) {
   if (!segmenter) return null
   const iw = img.naturalWidth ?? img.width, ih = img.naturalHeight ?? img.height
@@ -292,19 +294,25 @@ export function skinMaskOf(segmenter, img, max = 512) {
   segmenter.segment(c, (result) => { // 결과는 이 함수 안에서만 유효해서 바로 복사
     const m = result.confidenceMasks
     if (!m || !m[BACKGROUND]) return
-    const bg = m[BACKGROUND].getAsFloat32Array()
-    const data = new Float32Array(bg.length)
-    for (let i = 0; i < data.length; i++) data[i] = 1 - bg[i]
-    mask = { data, w: m[BACKGROUND].width, h: m[BACKGROUND].height }
+    const parts = PROTECT.map((_, k) => m[k]?.getAsFloat32Array() ?? null)
+    const bg = parts[BACKGROUND]
+    const data = new Float32Array(bg.length), person = new Float32Array(bg.length)
+    for (let i = 0; i < data.length; i++) {
+      person[i] = 1 - bg[i]
+      let p = 0
+      for (let k = 1; k < PROTECT.length; k++) if (parts[k]) p += parts[k][i] * PROTECT[k]
+      data[i] = Math.min(1, p)
+    }
+    mask = { data, person, w: m[BACKGROUND].width, h: m[BACKGROUND].height }
   })
   return mask
 }
 
-// x·y가 w×h 그림의 위치일 때, 그 자리의 보호 영역 확률
+// x·y가 w×h 그림의 위치일 때, 그 자리의 지도 값 (key: 'data' = 보호 정도, 'person' = 사람일 확률)
 // 작은 지도를 큰 사진에 쓰므로 주변 4칸을 거리만큼 섞어 읽음(이중선형 보간) → 경계가 계단처럼 보이지 않음
-function skinAt(mask, x, y, w, h) {
+function skinAt(mask, x, y, w, h, key = 'data') {
   if (!mask) return 0
-  const W = mask.w, d = mask.data
+  const W = mask.w, d = mask[key]
   const fx = Math.min(W - 1, Math.max(0, ((x + 0.5) * W) / w - 0.5))
   const fy = Math.min(mask.h - 1, Math.max(0, ((y + 0.5) * mask.h) / h - 0.5))
   const x0 = Math.floor(fx), y0 = Math.floor(fy)
@@ -325,7 +333,7 @@ function labStats(data, w, h, mask) {
     total++
     for (let c = 0; c < 3; c++) { all[c] += lab[c]; allSq[c] += lab[c] ** 2 }
     if (lab[0] < L_MIN || lab[0] > L_MAX) continue
-    const wgt = 1 - skinAt(mask, p % w, Math.floor(p / w), w, h)
+    const wgt = 1 - skinAt(mask, p % w, Math.floor(p / w), w, h, 'person') // 통계는 배경에서만 (사람은 약하게 입혀도 기준에선 뺌)
     n += wgt
     for (let c = 0; c < 3; c++) { sum[c] += wgt * lab[c]; sq[c] += wgt * lab[c] ** 2 }
   }

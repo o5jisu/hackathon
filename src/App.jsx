@@ -429,10 +429,10 @@ export default function App() {
       const src = statsOf(canvas, shotMask), ref = statsOf(refImg.current, refMask)
       setMatchedCapture({ src, ref, mask: shotMask, preview: matchColor(preview, src, ref, shotMask) })
       setView('edited')
-      const background = shotMask ? 1 - shotMask.data.reduce((s, v) => s + v, 0) / shotMask.data.length : 1
+      const background = shotMask ? 1 - shotMask.person.reduce((s, v) => s + v, 0) / shotMask.person.length : 1
       const colorGap = Math.hypot(...src.mean.map((m, c) => m - ref.mean[c])) // Lab 평균 색 차이
       setMatchNote(background < SMALL_BACKGROUND
-        ? `사진의 ${Math.round((1 - background) * 100)}%가 사람이라 바뀌는 곳이 적어요. 사람은 원래 색을 지키고 배경만 바꾸거든요.${crop ? ' "전체 사진"으로 보면 더 잘 보여요.' : ''}`
+        ? `사진의 ${Math.round((1 - background) * 100)}%가 사람이라 변화가 은은해요. 피부·머리색이 어색해지지 않게 사람에는 약하게만 입히거든요.${crop ? ' "전체 사진"으로 보면 더 잘 보여요.' : ''}`
         : colorGap < SIMILAR_COLOR ? '참고 사진과 색감이 원래 비슷해서 변화가 작아요.' : '')
     } catch (e) {
       setMatchNote('색감을 적용하지 못했어요. 다시 눌러 주세요. (' + e.message + ')')
@@ -660,7 +660,7 @@ export default function App() {
           <div className="tool" role="tabpanel">
             {tab === 'color' && (!matchedCapture ? (
               <div className="tool-row">
-                <p className="hint left">배경에만 참고 사진 분위기를 입혀요 (사람은 원래 색).</p>
+                <p className="hint left">참고 사진 분위기를 입혀요. 얼굴·피부는 자연스럽게 약하게만.</p>
                 <button className="btn primary small" disabled={busy} onClick={applyMatch}>
                   {busy ? '계산 중…' : '색감 적용'}
                 </button>
