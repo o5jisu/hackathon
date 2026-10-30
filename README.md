@@ -25,9 +25,9 @@
 
 ## 조정할 값
 
-- `pose.js`의 `MATCH_T` (기본 0.3): 작을수록 엄격
-- `App.jsx`의 `HOLD_MS` (기본 1000ms): 자동 촬영까지 유지 시간
+- `pose.js`의 `MATCH_T` (기본 0.3): 팔다리 판정 허용 범위, 작을수록 엄격
+- `pose.js`의 `HEAD_T`: 고개 각도(기울이기 10°, 돌리기·숙이기 0.15) 허용 범위, 작을수록 엄격
 
 ## 오프라인 시연 대비
 
-모델 파일(`pose_landmarker_full.task`)을 미리 받아 `public/models/`에 넣고, `pose.js`의 `MODEL_URL`을 `'/models/pose_landmarker_full.task'`로 바꾸세요.
+모델 파일 두 개(카메라용 `pose_landmarker_full.task`, 참고 사진용 `pose_landmarker_heavy.task`)를 미리 받아 `public/models/`에 넣고, `pose.js`의 `MODEL_URL`·`HEAVY_MODEL_URL`을 `'/models/파일이름'`으로 바꾸세요.
