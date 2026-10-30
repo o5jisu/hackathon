@@ -19,11 +19,13 @@ npm run dev   # https://localhost:5173 , 폰은 같은 와이파이에서 Networ
 
 | 파일 | 역할 |
 | --- | --- |
-| `src/pose.js` | MediaPipe 모델 로드, 좌표 변환(toFrame/cropRect/toPixels/mirror/bodyFrame/normalize), 관절 비교(compare), 머리 각도 비교(compareHead: 코·눈·귀로 기울이기/돌리기/숙이기, 허용 범위 HEAD_T), 안내 문장(adviceFor/headAdvice), 색감 보정(statsOf/matchColor/blendImages) |
+| `src/pose.js` | MediaPipe 모델 로드, 좌표 변환(frameRect/toFrame/toPixels/mirror/bodyFrame/normalize), 관절 비교(compare), 머리 각도 비교(compareHead: 코·눈·귀로 기울이기/돌리기/숙이기, 허용 범위 HEAD_T. 화면에는 코 + 입 가운데(턱 대신, 포즈 모델엔 턱 점이 없음)만 표시), 안내 문장(adviceFor/headAdvice), 색감 보정(statsOf/matchColor/blendImages: Lab 색공간 Reinhard 색 전이, L<4·L>96 픽셀은 통계에서 제외, 퍼짐 비율 0.5~2배 제한) |
 | `src/App.jsx` | 화면 3개(upload → coaching → captured), 카메라 루프(앞·뒤 카메라 전환), 참고 사진 오버레이(투명도 조절), 셔터 촬영, 원본·보정 비교 화면 |
 | `src/App.css`, `src/index.css` | 스타일 |
 
-촬영 틀: 카메라·참고 사진·촬영 결과 모두 가운데를 9:16으로 자른다(`pose.js`의 `cropRect`/`toFrame`, CSS `object-fit: cover`). 관절 좌표는 공통 900×1600 틀 좌표를 쓴다. 참고 사진 크기·위치 조절은 사용자 요청으로 제거했다.
+촬영 틀 = 참고 사진: 카메라는 영상 비율 그대로(잘림 없이) 보이고, 참고 사진은 처음엔 가운데에 원래 비율로 가장 크게 놓인다(`.frame`, 바깥은 어둡게). 이후 한 손가락 끌기·두 손가락 확대/축소·설정의 크기 슬라이더로 옮기고 키울 수 있다(`align = {scale, dx, dy}`). 틀 영역은 `pose.js`의 `frameRect`(0~1 비율) 하나로 CSS 위치·관절 좌표(`toFrame`)·촬영 자르기에 똑같이 쓴다. 관절 좌표는 참고 사진 픽셀 좌표계. 관절이 보이는지는 카메라 화면 기준으로 판단하고(틀 밖이어도 판정에 씀), 흔들림 줄이기(`smoothPoints`)는 카메라 0~1 좌표에서 먼저 한 뒤 `toFrame`으로 바꾼다 → 사진 크기를 바꿔도 인식·판정이 그대로. 촬영 시 전체 사진과 틀 영역(카메라 밖 부분 제외)만큼 자른 사진을 둘 다 만들고 기본은 자른 사진.
+
+코칭 화면 UI는 촬영에 방해되지 않게 최소화: 위에 점수+안내 한 줄, 아래에 ⚙ 설정·셔터·나가기. 투명도·크기·격자·카메라 전환·범례는 ⚙ 설정 패널 안에 있다.
 
 좌우 처리: 앞 카메라(`facing === 'user'`)만 거울 처리하고, 뒤 카메라는 뒤집지 않는다(`mirror()` 생략, `adviceFor`의 `mirrored=false`면 화면 오른쪽 = 사용자 왼쪽). 앞 카메라 화면은 거울처럼 보인다. `mirror()`가 x를 뒤집고 좌우 관절 번호를 바꿔서, 참고 사진의 j번 관절과 "화면에서 같은 쪽"의 사용자 관절을 비교한다. 안내 문구는 사용자 몸 기준 이름을 쓴다.
 

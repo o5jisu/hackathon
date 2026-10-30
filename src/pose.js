@@ -45,7 +45,7 @@ export const TARGETS = [13, 14, 15, 16, 25, 26, 27, 28]
 const NOSE = 0, L_EYE = 2, R_EYE = 5, L_EAR = 7, R_EAR = 8
 export const HEAD_PTS = [NOSE, L_EYE, R_EYE, L_EAR, R_EAR]
 // 머리 각도 허용 범위 (실제 기기에서 조정할 값). 기울기는 도(°), 돌림·숙임은 두 귀 사이 거리 대비 비율
-const HEAD_T = { roll: 10, yaw: 0.15, pitch: 0.15 }
+const HEAD_T = { roll: 20, yaw: 0.3, pitch: 0.3 }
 // 뼈대 선
 export const BONES = [
   [11, 12], [11, 13], [13, 15], [12, 14], [14, 16],
@@ -70,20 +70,18 @@ export function toPixels(lms, w, h) {
   })
 }
 
-// 촬영 틀: 카메라·참고 사진 모두 가운데를 9:16으로 잘라 이 크기의 공통 좌표로 맞춤
-export const FRAME_W = 900, FRAME_H = 1600
-
-// w×h 그림의 가운데를 9:16으로 잘라낸 영역 (CSS object-fit: cover와 같은 방식)
-export function cropRect(w, h) {
-  const cw = Math.min(w, (h * FRAME_W) / FRAME_H), ch = (cw * FRAME_H) / FRAME_W
-  return { x: (w - cw) / 2, y: (h - ch) / 2, w: cw, h: ch }
+// 촬영 틀 = 참고 사진. 틀이 카메라 화면에서 차지하는 영역을 0~1 비율로 계산
+// a = { scale, dx, dy }: 기본(scale 1, 이동 0)은 가운데에 원래 비율 그대로 가장 크게. dx·dy는 화면 크기 대비 이동량
+export function frameRect(refAspect, videoAspect, a) {
+  const w = Math.min(1, refAspect / videoAspect) * a.scale
+  const h = Math.min(1, videoAspect / refAspect) * a.scale
+  return { x: 0.5 - w / 2 + a.dx, y: 0.5 - h / 2 + a.dy, w, h }
 }
 
-// 전체 그림 기준 0~1 좌표 → 9:16 틀 픽셀 좌표. 잘려 나간 관절은 안 보이는 것으로 처리
-export function toFrame(lms, w, h) {
-  const r = cropRect(w, h)
-  const inFrame = lms.map((p) => ({ ...p, x: (p.x * w - r.x) / r.w, y: (p.y * h - r.y) / r.h }))
-  return toPixels(inFrame, FRAME_W, FRAME_H)
+// 카메라 0~1 좌표({x, y, v}) → 참고 사진 틀 좌표(참고 사진 픽셀 크기 fw×fh와 같은 좌표계). r = frameRect 결과
+// 보이는지(v)는 카메라 화면 기준 그대로 둠 → 사진을 줄여 틀이 작아져도 카메라에 보이는 관절은 계속 판정
+export function toFrame(pts, r, fw, fh) {
+  return pts.map((p) => ({ x: ((p.x - r.x) / r.w) * fw, y: ((p.y - r.y) / r.h) * fh, v: p.v }))
 }
 
 // 거울 화면용 변환: x를 뒤집고 좌우 관절 번호를 바꿈
@@ -182,16 +180,54 @@ export function adviceFor(j, refN, liveN, mirrored) {
   return `${name} ${action}`
 }
 
-// 촬영 사진 색감을 참고 사진에 맞추기 (채널별 평균·표준편차 맞춤)
-function channelStats(data) {
-  const sum = [0, 0, 0], sq = [0, 0, 0]
-  let n = 0
+// ── 촬영 사진 색감을 참고 사진에 맞추기 (Reinhard 색 전이) ──
+// RGB 대신 Lab 색공간(L = 밝기, a = 초록↔빨강, b = 파랑↔노랑)에서 채널별 평균·표준편차를 맞춤
+// → 밝기와 색이 따로 움직여서 RGB에서 할 때보다 색이 덜 탁하고 자연스러움
+
+// sRGB(0~255) ↔ 선형 밝기(0~1). 화면용 RGB는 감마가 적용돼 있어서 계산 전에 풀어 줘야 함
+const LIN = Array.from({ length: 256 }, (_, i) => {
+  const c = i / 255
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+})
+const toSrgb = (c) => 255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.cbrt(c) ** 1.25 - 0.055) // c^(1/2.4) = cbrt(c)^1.25
+
+const labF = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116)
+const labFInv = (t) => (t > 0.206893 ? t * t * t : (t - 16 / 116) / 7.787)
+
+function rgbToLab(r, g, b, out) {
+  const R = LIN[r], G = LIN[g], B = LIN[b]
+  const x = labF((0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047)
+  const y = labF(0.2126 * R + 0.7152 * G + 0.0722 * B)
+  const z = labF((0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883)
+  out[0] = 116 * y - 16; out[1] = 500 * (x - y); out[2] = 200 * (y - z)
+}
+
+function labToRgb(L, A, Bv, out) {
+  const fy = (L + 16) / 116
+  const X = 0.95047 * labFInv(fy + A / 500), Y = labFInv(fy), Z = 1.08883 * labFInv(fy - Bv / 200)
+  out[0] = toSrgb(Math.max(0, 3.2406 * X - 1.5372 * Y - 0.4986 * Z))
+  out[1] = toSrgb(Math.max(0, -0.9689 * X + 1.8758 * Y + 0.0415 * Z))
+  out[2] = toSrgb(Math.max(0, 0.0557 * X - 0.2040 * Y + 1.0570 * Z))
+}
+
+// 너무 어둡거나(L < 4) 하얗게 날아간(L > 96) 픽셀은 색 정보가 없어서 통계에서 뺌
+const L_MIN = 4, L_MAX = 96
+
+function labStats(data) {
+  const sum = [0, 0, 0], sq = [0, 0, 0], all = [0, 0, 0], allSq = [0, 0, 0], lab = [0, 0, 0]
+  let n = 0, total = 0
   for (let i = 0; i < data.length; i += 4) {
-    for (let c = 0; c < 3; c++) { sum[c] += data[i + c]; sq[c] += data[i + c] ** 2 }
+    rgbToLab(data[i], data[i + 1], data[i + 2], lab)
+    total++
+    for (let c = 0; c < 3; c++) { all[c] += lab[c]; allSq[c] += lab[c] ** 2 }
+    if (lab[0] < L_MIN || lab[0] > L_MAX) continue
     n++
+    for (let c = 0; c < 3; c++) { sum[c] += lab[c]; sq[c] += lab[c] ** 2 }
   }
-  const mean = sum.map((s) => s / n)
-  const std = sq.map((q, c) => Math.sqrt(Math.max(q / n - mean[c] ** 2, 1)))
+  // 남은 픽셀이 너무 적으면(거의 검거나 흰 사진) 전체 픽셀로 계산
+  const [S, Q, N] = n > total * 0.05 ? [sum, sq, n] : [all, allSq, total]
+  const mean = S.map((v) => v / N)
+  const std = Q.map((q, c) => Math.sqrt(Math.max(q / N - mean[c] ** 2, 1)))
   return { mean, std }
 }
 
@@ -201,17 +237,23 @@ export function statsOf(img) {
   c.width = Math.round(img.width * k); c.height = Math.round(img.height * k)
   const ctx = c.getContext('2d')
   ctx.drawImage(img, 0, 0, c.width, c.height)
-  return channelStats(ctx.getImageData(0, 0, c.width, c.height).data)
+  return labStats(ctx.getImageData(0, 0, c.width, c.height).data)
 }
+
+// 퍼짐(표준편차) 비율은 0.5~2배로 제한 → 참고 사진이 아주 밋밋하거나 강해도 결과가 깨지지 않게
+const clampRatio = (v) => Math.min(2, Math.max(0.5, v))
 
 // '참고 사진 색감 적용' 버튼을 눌렀을 때 한 번만 계산하는 100% 보정 결과 (원본은 건드리지 않음)
 export function matchColor(original, src, ref) {
   const out = new ImageData(new Uint8ClampedArray(original.data), original.width, original.height)
   const d = out.data
+  const ratio = [0, 1, 2].map((c) => clampRatio(ref.std[c] / src.std[c]))
+  const lab = [0, 0, 0], rgb = [0, 0, 0]
   for (let i = 0; i < d.length; i += 4) {
-    for (let c = 0; c < 3; c++) {
-      d[i + c] = (d[i + c] - src.mean[c]) * (ref.std[c] / src.std[c]) + ref.mean[c]
-    }
+    rgbToLab(d[i], d[i + 1], d[i + 2], lab)
+    for (let c = 0; c < 3; c++) lab[c] = (lab[c] - src.mean[c]) * ratio[c] + ref.mean[c]
+    labToRgb(lab[0], lab[1], lab[2], rgb)
+    d[i] = rgb[0]; d[i + 1] = rgb[1]; d[i + 2] = rgb[2] // Uint8ClampedArray라 0~255로 자동 제한
   }
   return out
 }
