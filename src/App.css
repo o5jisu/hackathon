@@ -142,33 +142,33 @@
 .back { position: absolute; top: max(14px, env(safe-area-inset-top)); left: 16px; }
 .gear { position: absolute; top: max(14px, env(safe-area-inset-top)); right: 16px; }
 
-/* 위: 큰 점수 + 진행 막대 */
+/* 위: 점수 + 진행 막대를 버튼 높이의 한 줄로 (카메라 화면을 덜 가리게) */
 .hud {
-  position: absolute; top: max(8px, env(safe-area-inset-top)); left: 76px; right: 76px;
-  display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none;
+  position: absolute; top: max(14px, env(safe-area-inset-top)); left: 76px; right: 76px; height: 48px;
+  display: flex; align-items: center; justify-content: center; gap: 10px; pointer-events: none;
 }
-.score { display: flex; align-items: baseline; line-height: 1; text-shadow: 0 2px 14px rgba(0,0,0,.7); transition: color .2s; }
-.score b { font-size: clamp(64px, 22cqw, 96px); font-weight: 900; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
-.score span { font-size: 28px; font-weight: 700; }
-.meter { position: relative; width: 100%; max-width: 260px; height: 10px; border-radius: 5px; background: rgba(255,255,255,.25); }
-.meter i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; transition: width .2s, background .2s; }
-.meter .goal { position: absolute; top: -4px; width: 2px; height: 18px; background: #fff; }
-.meter-cap { font-size: 13px; color: rgba(255,255,255,.88); text-shadow: 0 1px 6px rgba(0,0,0,.8); }
+.score { display: flex; align-items: baseline; line-height: 1; text-shadow: 0 1px 8px rgba(0,0,0,.7); transition: color .2s; }
+.score b { font-size: 34px; font-weight: 900; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.score span { font-size: 15px; font-weight: 700; }
+.meter { position: relative; flex: 0 1 120px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.3); }
+.meter i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; transition: width .2s, background .2s; }
+.meter .goal { position: absolute; top: -3px; width: 2px; height: 12px; background: #fff; }
 
-/* 안내 카드: 몸 그림 + 큰 문장 (최대 2줄, 단어 단위 줄바꿈) */
+/* 안내: 작은 몸 그림 + 한두 줄 문장. 가운데 정렬된 작은 카드 */
 .tip {
-  position: absolute; left: 16px; right: 16px; max-width: 440px; margin: 0 auto;
-  top: calc(max(8px, env(safe-area-inset-top)) + clamp(124px, 34cqw, 156px));
-  display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 18px;
+  position: absolute; left: 16px; right: 16px; width: fit-content; max-width: min(400px, calc(100% - 32px)); margin: 0 auto;
+  top: calc(max(14px, env(safe-area-inset-top)) + 58px);
+  display: flex; align-items: center; gap: 10px; padding: 7px 14px 7px 10px; border-radius: 14px;
+  background: rgba(0,0,0,.45);
 }
 .tip p {
-  margin: 0; font-size: clamp(20px, 6.6cqw, 26px); font-weight: 700; line-height: 1.3;
+  margin: 0; font-size: 16px; font-weight: 700; line-height: 1.35;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
   word-break: keep-all; overflow-wrap: anywhere; text-wrap: balance;
 }
 .tip.move { justify-content: space-between; }
-.tip.move p { font-size: 16px; }
-.body-hint { flex: none; }
+.tip.move p { font-size: 14px; }
+.body-hint { flex: none; width: 20px; height: 29px; }
 .pill {
   flex: none; min-height: 40px; padding: 0 16px; border-radius: 999px; border: 0;
   background: #fff; color: #0E0C0A; font: 700 14px var(--sans); cursor: pointer;
@@ -209,33 +209,36 @@
 .shutter:active { transform: scale(.94); }
 
 /* ── 06 편집: 사진은 위에 고정, 도구는 아래 ── */
-.page.edit { height: 100dvh; min-height: 0; gap: 10px; }
+.page.edit { height: 100dvh; min-height: 0; gap: 8px; padding-top: max(8px, env(safe-area-inset-top)); }
+.page.edit .bar-head { min-height: 44px; }
+/* 사진: 좌우 여백 없이 화면 끝까지, 남는 높이를 전부 씀 */
 .photo {
-  position: relative; flex: 1 1 auto; min-height: 180px;
-  background: var(--card); border: 8px solid var(--card); box-shadow: 0 8px 20px rgba(60, 40, 20, .14);
+  position: relative; flex: 1 1 auto; min-height: 200px; margin: 0 -24px;
+  background: var(--sand);
   touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .photo canvas, .photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
 .photo [hidden] { display: none; }
-.compare-toggle {
-  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
-  display: flex; padding: 3px; border-radius: 999px; background: rgba(26, 22, 18, .8);
-}
+.photo-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; }
+.compare-toggle { display: flex; padding: 3px; border-radius: 999px; background: var(--sand); }
 .compare-toggle button {
-  min-height: 36px; padding: 0 14px; border: 0; border-radius: 999px; cursor: pointer;
-  background: transparent; color: #E9DFCF; font: 500 13px var(--sans);
+  min-height: 34px; padding: 0 12px; border: 0; border-radius: 999px; cursor: pointer; white-space: nowrap;
+  background: transparent; color: var(--ink2); font: 500 13px var(--sans);
 }
-.compare-toggle button.on { background: var(--card); color: var(--ink); font-weight: 700; }
+.compare-toggle button.on { background: var(--ink); color: var(--card); font-weight: 700; }
 
 .tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--line); flex: none; }
 .tabs button {
-  position: relative; min-height: 44px; border: 0; border-bottom: 2.5px solid transparent; background: transparent; cursor: pointer;
+  position: relative; min-height: 40px; border: 0; border-bottom: 2.5px solid transparent; background: transparent; cursor: pointer;
   font: 500 15px var(--sans); color: var(--ink2);
 }
 .tabs button.on { color: var(--ink); font-weight: 700; border-bottom-color: var(--ink); }
 .tabs .mark { position: absolute; top: 10px; margin-left: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--burnt); }
 /* 도구 칸 높이를 고정해서 탭을 바꿔도 사진 크기가 출렁이지 않음 */
-.tool { flex: none; min-height: 132px; display: flex; flex-direction: column; gap: 10px; }
+.tool { flex: none; min-height: 92px; display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+.tool-row { display: flex; align-items: center; gap: 10px; }
+.tool-row .hint { flex: 1; }
+.tool-row .btn.small { align-self: center; flex: none; }
 .chips { display: flex; gap: 8px; overflow-x: auto; margin: 0 -24px; padding: 0 24px; scrollbar-width: none; }
 .chips::-webkit-scrollbar { display: none; }
 .chips button {
@@ -243,14 +246,15 @@
   border: 1px solid var(--line); background: transparent; color: var(--ink); font: 500 14px var(--sans);
 }
 .chips button.on { background: var(--ink); border-color: var(--ink); color: var(--card); font-weight: 700; }
-.slider { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--ink2); }
-.slider span { display: flex; justify-content: space-between; }
-.slider b { color: var(--ink); font-variant-numeric: tabular-nums; }
-.slider input { width: 100%; accent-color: var(--burnt); height: 28px; }
-.dock-row { display: grid; grid-template-columns: 1fr 1.6fr; gap: 10px; }
-.dock-row .btn { padding: 0 12px; font-size: 15px; }
-.dock-links { display: flex; justify-content: center; gap: 16px; margin-top: -4px; }
-.page.edit .dock { margin-top: 0; padding-top: 6px; background: var(--paper); }
+.slider { display: flex; flex-direction: column; gap: 0; font-size: 13px; color: var(--ink2); }
+.slider > span { display: flex; justify-content: space-between; align-items: center; min-height: 32px; }
+.slider b { margin-left: 6px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.slider .text-btn { min-height: 32px; font-size: 13px; }
+.slider input { width: 100%; accent-color: var(--burnt); height: 28px; margin: 0; }
+.chips button { min-height: 36px; }
+.dock-row { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
+.dock-row .btn { min-height: 50px; padding: 0 12px; font-size: 15px; }
+.page.edit .dock { margin-top: 0; padding-top: 4px; padding-bottom: max(12px, env(safe-area-inset-bottom)); background: var(--paper); }
 
 /* ── 포즈 라이브러리(src/pose_recommend)가 쓰는 공통 클래스 ── */
 .panel {

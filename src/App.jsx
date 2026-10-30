@@ -458,6 +458,7 @@ export default function App() {
   const frameStyle = { left: `${fr.x * 100}%`, top: `${fr.y * 100}%`, width: `${fr.w * 100}%`, height: `${fr.h * 100}%` }
   // 편집 화면에 실제로 보이는 사진: 누르고 있으면 원본, 보정이 없으면 '보정'도 원본
   const shown = holding ? 'original' : view === 'edited' && !hasEdits ? 'original' : view
+  const saveEdited = hasEdits && view !== 'original' // 원본을 보고 있으면 원본을 저장
   const goHome = () => { setError(''); setScreen('home') }
 
   return (
@@ -517,7 +518,6 @@ export default function App() {
               <i style={{ width: `${score}%`, background: good ? 'var(--ok)' : 'var(--fix)' }} />
               <span className="goal" style={{ left: `${GOOD_PCT}%` }} />
             </div>
-            <span className="meter-cap">{good ? '찍기 좋은 자세예요' : `${GOOD_PCT}%를 넘으면 찍기 좋아요`}</span>
           </div>
 
           {moveMode ? (
@@ -584,21 +584,25 @@ export default function App() {
             <button className="text-btn" disabled={!hasEdits} onClick={resetEdits}>되돌리기</button>
           </header>
 
-          {/* 사진은 위에 고정: 도구를 만지는 동안에도 결과가 보임. 누르고 있으면 원본 */}
+          {/* 사진은 위에 고정하고 남는 높이를 다 씀(좌우 끝까지). 누르고 있으면 원본 */}
           <div className="photo" onPointerDown={() => setHolding(true)} onPointerUp={() => setHolding(false)}
             onPointerLeave={() => setHolding(false)} onPointerCancel={() => setHolding(false)}
             onContextMenu={(e) => e.preventDefault()}>
             <canvas ref={originalRef} hidden={shown !== 'original'} />
             <canvas ref={previewRef} hidden={shown !== 'edited'} />
             {shown === 'ref' && <img src={refUrl} alt="참고 사진" draggable={false} />}
-            <div className="compare-toggle" role="radiogroup" aria-label="비교 보기" onPointerDown={(e) => e.stopPropagation()}>
+          </div>
+
+          {/* 사진 바로 아래 한 줄: 비교 보기 · 자르기 (사진을 가리지 않게 밖으로 뺌) */}
+          <div className="photo-bar">
+            <div className="compare-toggle" role="radiogroup" aria-label="비교 보기">
               {[['ref', '레퍼런스'], ['original', '원본'], ['edited', '보정']].map(([k, label]) => (
                 <button key={k} role="radio" aria-checked={view === k} className={view === k ? 'on' : ''}
                   onClick={() => setView(k)}>{label}</button>
               ))}
             </div>
+            <button className="text-btn" onClick={() => selectShot(!cropToRef)}>{cropToRef ? '전체 사진' : '틀에 맞춤'}</button>
           </div>
-          <p className="hint">{hasEdits ? '사진을 누르고 있으면 원본이 보여요' : '아래 도구로 보정하면 여기에서 바로 보여요'}</p>
 
           <div className="tabs" role="tablist" aria-label="편집 도구">
             {[['color', '색감'], ['adjust', '조정'], ['film', '필름']].map(([k, label]) => (
@@ -613,21 +617,16 @@ export default function App() {
 
           <div className="tool" role="tabpanel">
             {tab === 'color' && (!matchedCapture ? (
-              <>
-                <p className="hint left">참고 사진의 분위기를 배경에만 입혀요. 얼굴·피부·머리카락·옷은 원래 색 그대로예요.</p>
+              <div className="tool-row">
+                <p className="hint left">배경에만 참고 사진 분위기를 입혀요 (사람은 원래 색).</p>
                 <button className="btn primary small" disabled={busy} onClick={applyMatch}>
-                  {busy ? '색감 계산 중… (처음엔 모델을 받아요)' : '참고 사진 색감 적용'}
+                  {busy ? '계산 중…' : '색감 적용'}
                 </button>
-              </>
+              </div>
             ) : (
-              <>
-                <label className="slider">
-                  <span>색감 강도 <b>{Math.round(colorMatchStrength * 100)}%</b></span>
-                  <input type="range" min="0" max="1" step="0.05" value={colorMatchStrength}
-                    onChange={(e) => setColorMatchStrength(Number(e.target.value))} />
-                </label>
-                <button className="text-btn" onClick={() => setMatchedCapture(null)}>색감 끄기</button>
-              </>
+              <ToolSlider label="색감 강도" value={`${Math.round(colorMatchStrength * 100)}%`}
+                min="0" max="1" current={colorMatchStrength} onChange={setColorMatchStrength}
+                resetLabel="끄기" onReset={() => setMatchedCapture(null)} />
             ))}
 
             {tab === 'adjust' && (
@@ -639,12 +638,10 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                <label className="slider">
-                  <span>{ADJUST_ITEMS.find(([k]) => k === adjustKey)[1]} <b>{adjust[adjustKey] > 0 ? '+' : ''}{Math.round(adjust[adjustKey] * 100)}</b></span>
-                  <input type="range" min="-1" max="1" step="0.05" value={adjust[adjustKey]}
-                    onChange={(e) => setAdjust((a) => ({ ...a, [adjustKey]: Number(e.target.value) }))} />
-                </label>
-                {hasAdjust(adjust) && <button className="text-btn" onClick={() => setAdjust(NO_ADJUST)}>조정 초기화</button>}
+                <ToolSlider label={ADJUST_ITEMS.find(([k]) => k === adjustKey)[1]}
+                  value={`${adjust[adjustKey] > 0 ? '+' : ''}${Math.round(adjust[adjustKey] * 100)}`}
+                  min="-1" max="1" current={adjust[adjustKey]} onChange={(v) => setAdjust((a) => ({ ...a, [adjustKey]: v }))}
+                  resetLabel="초기화" onReset={hasAdjust(adjust) ? () => setAdjust(NO_ADJUST) : null} />
               </>
             )}
 
@@ -657,28 +654,20 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                <label className="slider">
-                  <span>{FILM_ITEMS.find(([k]) => k === filmKey)[2]} <b>{Math.round(film[filmKey] * 100)}%</b></span>
-                  <input type="range" min="0" max="1" step="0.05" value={film[filmKey]}
-                    onChange={(e) => setFilm((f) => ({ ...f, [filmKey]: Number(e.target.value) }))} />
-                </label>
-                {hasFilm(film) && <button className="text-btn" onClick={() => setFilm(NO_FILM)}>필름 효과 끄기</button>}
+                <ToolSlider label={FILM_ITEMS.find(([k]) => k === filmKey)[2]} value={`${Math.round(film[filmKey] * 100)}%`}
+                  min="0" max="1" current={film[filmKey]} onChange={(v) => setFilm((f) => ({ ...f, [filmKey]: v }))}
+                  resetLabel="끄기" onReset={hasFilm(film) ? () => setFilm(NO_FILM) : null} />
               </>
             )}
           </div>
 
+          {/* 저장: 비교 보기에서 '원본'을 보고 있으면 원본, 아니면 보정본(보정이 있을 때) */}
           <div className="dock">
             <div className="dock-row">
-              <button className="btn ghost" onClick={() => selectShot(!cropToRef)}>
-                {cropToRef ? '전체 사진 보기' : '틀에 맞춰 자르기'}
+              <button className="btn ghost" onClick={goHome}>새 포즈</button>
+              <button className="btn primary" disabled={saving} onClick={() => save(saveEdited)}>
+                {saving ? '저장 준비 중…' : saveEdited ? '보정본 저장' : '원본 저장'}
               </button>
-              <button className="btn primary" disabled={saving} onClick={() => save(hasEdits)}>
-                {saving ? '저장 준비 중…' : hasEdits ? '보정본 저장' : '저장'}
-              </button>
-            </div>
-            <div className="dock-links">
-              {hasEdits && <button className="text-btn" disabled={saving} onClick={() => save(false)}>원본으로 저장</button>}
-              <button className="text-btn" onClick={goHome}>새 포즈 고르기</button>
             </div>
           </div>
         </section>
@@ -698,6 +687,20 @@ const FILM_ITEMS = [ // [키, 칩 이름, 슬라이더 설명]
   ['vignette', '비네팅', '비네팅 (가장자리 어둡게)'],
   ['warmth', '따뜻함', '따뜻함 (플래시 느낌)'],
 ]
+
+// 편집 슬라이더 한 줄: 위에 이름 · 값 · (초기화/끄기), 아래에 슬라이더. 세로 공간을 아껴 사진을 크게 보이게
+function ToolSlider({ label, value, min, max, current, onChange, resetLabel, onReset }) {
+  return (
+    <div className="slider">
+      <span>
+        <span>{label} <b>{value}</b></span>
+        {onReset && <button className="text-btn" onClick={onReset}>{resetLabel}</button>}
+      </span>
+      <input type="range" min={min} max={max} step="0.05" value={current} aria-label={label}
+        onChange={(e) => onChange(Number(e.target.value))} />
+    </div>
+  )
+}
 
 // 안내 중인 관절 → 몸 그림의 부위
 const PART_KIND = {
