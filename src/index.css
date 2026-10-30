@@ -1,6 +1,26 @@
+/* Motif. 디자인 시스템: 따뜻한 종이색 바탕 + 검정 잉크 + 절제된 번트 오렌지. 촬영 화면만 검정 바탕 */
+:root {
+  --paper: #F2EADB;
+  --card: #FAF5EB;
+  --sand: #E4D5BE;
+  --line: #CDBDA4;
+  --ink: #1A1612;
+  --ink2: #5E5346;
+  --burnt: #B4521E;
+  --burnt-soft: #F7DCC8;
+  --ok: #6EE7A8; /* 촬영 화면: 맞는 관절 */
+  --fix: #F07A2A; /* 촬영 화면: 고칠 관절 */
+  --error: #9F2D12;
+  --serif-en: 'Cormorant Garamond', 'Noto Serif KR', Georgia, serif;
+  --serif: 'Noto Serif KR', 'Apple SD Gothic Neo', serif;
+  --sans: 'Noto Sans KR', system-ui, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+}
+
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; min-height: 100%; }
 body {
-  font-family: system-ui, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
-  background: #f7f7f7; color: #111;
+  font-family: var(--sans);
+  background: var(--paper); color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
 }

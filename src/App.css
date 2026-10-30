@@ -1,56 +1,126 @@
+/* Motif. 화면 스타일. 색·글꼴 값은 index.css의 :root 변수(--paper, --ink, --burnt …) */
 .app { min-height: 100dvh; display: flex; justify-content: center; }
 
-.panel {
-  width: 100%; max-width: 480px; padding: 24px 16px;
+/* ── 공통: 페이지 · 버튼 · 안내 ── */
+.page {
+  width: 100%; max-width: 480px; min-height: 100dvh;
+  padding: max(20px, env(safe-area-inset-top)) 24px 0;
   display: flex; flex-direction: column; gap: 14px;
 }
-h1 { margin: 0; font-size: 28px; }
-.lead { margin: 0; color: #555; line-height: 1.5; }
-.hint { margin: 0; color: #888; font-size: 14px; text-align: center; }
-.status { margin: 0; color: #dc2626; }
-
-.file {
-  display: block; padding: 18px; border: 2px dashed #bbb; border-radius: 12px;
-  text-align: center; cursor: pointer; font-weight: 600;
+/* 아래 고정 버튼 영역: 내용이 길어도 주요 버튼이 화면 밖으로 밀리지 않음 */
+.dock {
+  position: sticky; bottom: 0; margin: auto -24px 0; padding: 14px 24px max(20px, env(safe-area-inset-bottom));
+  background: linear-gradient(rgba(242, 234, 219, 0), var(--paper) 18px);
+  display: flex; flex-direction: column; gap: 10px;
 }
-.file input { display: none; }
-.result { width: 100%; border-radius: 12px; }
-.preview { width: 100%; max-height: 60dvh; object-fit: contain; border-radius: 12px; }
-
-button {
-  padding: 12px 16px; border-radius: 10px; border: 1px solid #ccc;
-  background: #fff; font-size: 16px; cursor: pointer;
+.btn {
+  min-height: 54px; padding: 0 22px; border-radius: 999px; border: 1.5px solid var(--ink);
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  font: 700 16px var(--sans); cursor: pointer; transition: transform .1s, opacity .2s;
 }
-button.primary { background: #111; color: #fff; border-color: #111; }
-button:disabled { opacity: 0.4; cursor: default; }
-.actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-.slider { display: flex; flex-direction: column; gap: 6px; font-weight: 600; }
+.btn:active { transform: scale(.98); }
+.btn.primary { background: var(--ink); color: var(--card); }
+.btn.ghost { background: transparent; color: var(--ink); font-weight: 500; }
+.btn.small { min-height: 44px; font-size: 14px; padding: 0 18px; align-self: flex-start; }
+.btn:disabled, .btn.disabled { opacity: .35; cursor: default; transform: none; }
+.btn input, .text-btn input { display: none; } /* label 안의 사진 선택 */
+.text-btn {
+  min-height: 44px; padding: 0 6px; border: 0; background: transparent; color: var(--ink2);
+  font: 500 14px var(--sans); cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+  display: inline-flex; align-items: center;
+}
+.text-btn:disabled, .text-btn.disabled { opacity: .4; cursor: default; }
+.icon-btn {
+  width: 44px; height: 44px; padding: 0; border: 0; background: transparent; color: var(--ink);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.hint { margin: 0; color: var(--ink2); font-size: 13px; line-height: 1.55; text-align: center; }
+.hint.left { text-align: left; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 999px; font-size: 13px;
+}
+/* 오류: 로딩 표시와 구분되는 테두리 상자 */
+.notice { margin: 0; padding: 12px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5; display: flex; flex-direction: column; gap: 6px; }
+.notice.error { background: #F6E1D6; border: 1px solid #E2A98C; color: var(--error); }
+.notice b { font-weight: 700; }
+.notice .btn { color: var(--error); border-color: var(--error); }
 
-/* 코칭 화면: 테두리 없이 검은 배경. 상태는 위쪽 점수 색(흰·노랑·초록)과 뼈대 색으로 표시 */
+/* 로딩: 진행률을 알 수 없어서 퍼센트 대신 움직이는 막대 */
+.loading { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--ink2); }
+.bar { height: 3px; background: var(--sand); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 35%; background: var(--burnt); }
+.bar.indeterminate i { animation: slide 1.3s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+@media (prefers-reduced-motion: reduce) { .bar.indeterminate i { animation: none; width: 100%; opacity: .5; } }
+
+/* 제목 줄: 뒤로 · 제목 · (오른쪽 버튼) */
+.bar-head { display: grid; grid-template-columns: 64px 1fr 64px; align-items: center; margin: 0 -12px; }
+.bar-head h1 { margin: 0; text-align: center; font: 700 18px var(--serif); }
+.bar-head > :last-child { justify-self: end; }
+
+/* ── 01 첫 화면 ── */
+.home-head { padding-top: 24px; display: flex; flex-direction: column; gap: 4px; }
+.eyebrow { margin: 0; font-size: 11px; letter-spacing: .24em; color: var(--ink2); }
+.logo { margin: 0; font: 600 64px/0.95 var(--serif-en); letter-spacing: -.01em; }
+.logo span { color: var(--burnt); }
+.home-lead { margin: 14px 0 0; font: 500 19px/1.6 var(--serif); }
+.steps {
+  margin: 12px 0 0; padding: 0; list-style: none;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1.5px solid var(--ink); border-bottom: 1px solid var(--line);
+}
+.steps li { padding: 12px 8px; display: flex; flex-direction: column; gap: 3px; border-left: 1px solid var(--line); }
+.steps li:first-child { border-left: 0; padding-left: 0; }
+.steps i { font: italic 500 22px var(--serif-en); }
+.steps b { font-size: 14px; }
+.steps span { font-size: 12px; color: var(--ink2); line-height: 1.4; word-break: keep-all; }
+.tips { margin-top: 10px; }
+.tips h2 { margin: 0 0 8px; font: 700 16px var(--serif); }
+.tips ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.tips li {
+  padding: 10px 0 10px 18px; position: relative; border-bottom: 1px solid var(--line);
+  font-size: 14px; line-height: 1.55; word-break: keep-all;
+}
+.tips li::before { content: ''; position: absolute; left: 0; top: 19px; width: 8px; border-top: 1.5px solid var(--burnt); }
+.tips b { font-weight: 700; }
+.tips b.ok { color: #1F7A4D; } /* 종이 바탕에서 읽히는 진한 초록·오렌지 (촬영 화면 색과 같은 계열) */
+.tips b.fix { color: var(--burnt); }
+
+/* ── 02 참고 사진 확인 ── */
+.ref-photo {
+  position: relative; align-self: center; aspect-ratio: var(--ar);
+  width: min(100%, 52dvh * var(--ar)); /* 세로가 긴 사진도 화면 절반 정도 높이까지만 */
+  border: 8px solid var(--card); box-shadow: 0 8px 20px rgba(60, 40, 20, .14); background: var(--sand);
+}
+.ref-photo img, .ref-photo svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.ref-info { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+
+/* ── 03 촬영 · 코칭: 검은 바탕, 멀리서 보이게 큰 글씨 ── */
 .stage {
-  position: fixed; inset: 0; background: #000;
+  position: fixed; inset: 0; background: #0E0C0A; color: #fff;
   display: flex; align-items: center; justify-content: center;
   container-type: size;
 }
-/* 카메라 상자: 영상 비율(--va) 그대로 화면 안에 가장 크게 → 영상이 잘리지 않음. 끌기·두 손가락 조작을 받음 */
+/* 카메라 상자: 영상 비율(--va) 그대로 화면 안에 가장 크게 → 영상이 잘리지 않음 */
 .camera {
   position: relative; overflow: hidden; aspect-ratio: var(--va);
   width: min(100cqw, 100cqh * var(--va));
-  touch-action: none; cursor: grab; user-select: none;
+  touch-action: none; user-select: none;
 }
+.camera.moving { cursor: grab; }
+.camera.moving .frame { outline: 3px dashed #fff; }
 .camera video, .camera canvas {
   position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain;
 }
 /* 참고 사진 틀: 원래 비율 그대로. 틀 바깥(촬영 후 잘릴 곳)은 어둡게 */
 .frame { position: absolute; box-shadow: 0 0 0 100vmax rgba(0,0,0,.45); outline: 2px solid rgba(255,255,255,.8); }
 .mirrored { transform: scaleX(-1); } /* 영상만 거울처럼. 캔버스는 이미 뒤집은 좌표로 그림 */
-
-/* 참고 사진 오버레이: 틀을 꽉 채움(틀이 사진과 같은 비율이라 안 잘림). 흐림·투명도는 이 요소에만 */
 .frame .ref-overlay {
   position: absolute; inset: 0; width: 100%; height: 100%;
   filter: blur(3px); pointer-events: none;
 }
-/* 3×3 구도 격자: 참고 사진 틀의 가로·세로 1/3, 2/3 위치에 얇은 선. 관절점(canvas)보다 아래에 깔림 */
+/* 3×3 구도 격자 (촬영 사진에는 안 들어감) */
 .frame .grid {
   --g: rgba(255,255,255,.5);
   position: absolute; inset: 0; pointer-events: none;
@@ -61,88 +131,145 @@ button:disabled { opacity: 0.4; cursor: default; }
     linear-gradient(var(--g), var(--g)) 0 66.667% / 100% 1px no-repeat;
 }
 
-/* 반투명 유리 느낌 (위·아래 막대, 버튼, 설정 패널 공통) */
-.glass, .topbar, .settings {
-  background: rgba(0,0,0,.42); color: #fff; border: 1px solid rgba(255,255,255,.16);
+.glass, .settings, .tip {
+  background: rgba(0,0,0,.55); color: #fff; border: 1px solid rgba(255,255,255,.16);
   -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
 }
+.round {
+  width: 48px; height: 48px; padding: 0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.back { position: absolute; top: max(14px, env(safe-area-inset-top)); left: 16px; }
+.gear { position: absolute; top: max(14px, env(safe-area-inset-top)); right: 16px; }
 
-/* 위: 점수 + 안내. 왼쪽 위 나가기 버튼과 겹치지 않게 양옆을 비우고 가운데 정렬 */
-.topbar {
-  position: absolute; top: max(12px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
-  width: max-content; max-width: calc(100% - 136px); display: flex; align-items: center; gap: 8px;
-  font-size: 14px; font-weight: 600; line-height: 1.3; text-align: left; pointer-events: none;
-  padding: 6px 14px 6px 10px; border-radius: 16px;
+/* 위: 큰 점수 + 진행 막대 */
+.hud {
+  position: absolute; top: max(8px, env(safe-area-inset-top)); left: 76px; right: 76px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none;
 }
-.topbar b {
-  flex: none; font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; transition: color .2s;
+.score { display: flex; align-items: baseline; line-height: 1; text-shadow: 0 2px 14px rgba(0,0,0,.7); transition: color .2s; }
+.score b { font-size: clamp(64px, 22cqw, 96px); font-weight: 900; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.score span { font-size: 28px; font-weight: 700; }
+.meter { position: relative; width: 100%; max-width: 260px; height: 10px; border-radius: 5px; background: rgba(255,255,255,.25); }
+.meter i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; transition: width .2s, background .2s; }
+.meter .goal { position: absolute; top: -4px; width: 2px; height: 18px; background: #fff; }
+.meter-cap { font-size: 13px; color: rgba(255,255,255,.88); text-shadow: 0 1px 6px rgba(0,0,0,.8); }
+
+/* 안내 카드: 몸 그림 + 큰 문장 (최대 2줄, 단어 단위 줄바꿈) */
+.tip {
+  position: absolute; left: 16px; right: 16px; max-width: 440px; margin: 0 auto;
+  top: calc(max(8px, env(safe-area-inset-top)) + clamp(124px, 34cqw, 156px));
+  display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 18px;
 }
-/* 안내 문구: 최대 2줄(넘치면 …), 한국어는 단어 단위로 줄바꿈, 두 줄 길이를 비슷하게 맞춤 */
-.topbar span {
+.tip p {
+  margin: 0; font-size: clamp(20px, 6.6cqw, 26px); font-weight: 700; line-height: 1.3;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
   word-break: keep-all; overflow-wrap: anywhere; text-wrap: balance;
 }
-
-/* 왼쪽 위: 나가기 */
-.back { position: absolute; top: max(12px, env(safe-area-inset-top)); left: 16px; }
-
-/* 아래: 설정 · 셔터 (가운데), 카메라 전환 (오른쪽 구석) */
-.bottombar {
-  position: absolute; bottom: 0; left: 0; right: 0;
-  padding: 36px 16px max(18px, env(safe-area-inset-bottom));
-  /* 3칸: 왼쪽(설정) · 가운데(셔터, 항상 정가운데) · 오른쪽(카메라 전환, 구석) */
-  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; column-gap: 44px;
-  background: linear-gradient(transparent, rgba(0,0,0,.5));
+.tip.move { justify-content: space-between; }
+.tip.move p { font-size: 16px; }
+.body-hint { flex: none; }
+.pill {
+  flex: none; min-height: 40px; padding: 0 16px; border-radius: 999px; border: 0;
+  background: #fff; color: #0E0C0A; font: 700 14px var(--sans); cursor: pointer;
 }
-.round { width: 46px; height: 46px; padding: 0; border-radius: 50%; font-size: 19px; }
-.bottombar > :first-child { justify-self: end; }
-.flip { grid-column: 3; justify-self: end; font-size: 22px; }
-.shutter {
-  width: 72px; height: 72px; padding: 0; border-radius: 50%;
-  background: #fff; border: 4px solid rgba(0,0,0,.25); box-shadow: 0 0 0 4px #fff;
-}
-.shutter:active { transform: scale(.94); }
 
 /* 설정 패널: ⚙를 눌렀을 때만 셔터 위에 펼쳐짐 */
 .settings {
-  position: absolute; bottom: 112px; left: 12px; right: 12px; max-width: 420px; margin: 0 auto;
+  position: absolute; bottom: 150px; left: 12px; right: 12px; max-width: 420px; margin: 0 auto;
   display: flex; flex-direction: column; gap: 12px;
   font-size: 14px; padding: 16px; border-radius: 18px;
 }
 .settings label { display: flex; flex-direction: column; gap: 6px; font-weight: 600; }
 .settings input[type=range] { accent-color: #fff; }
-.settings .tip { margin: 0; color: rgba(255,255,255,.7); font-size: 13px; }
 .settings .row { display: flex; gap: 6px; flex-wrap: wrap; }
 .settings .row button {
-  padding: 8px 12px; font-size: 13px; font-weight: 600; border-radius: 999px;
-  background: rgba(255,255,255,.14); color: #fff; border: 1px solid rgba(255,255,255,.2);
+  min-height: 40px; padding: 0 14px; font: 600 13px var(--sans); border-radius: 999px; cursor: pointer;
+  background: rgba(255,255,255,.14); color: #fff; border: 1px solid rgba(255,255,255,.22);
 }
-.legend { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: rgba(255,255,255,.85); }
-.legend span { display: flex; align-items: center; gap: 7px; }
+
+/* 아래: 범례(항상 보임) · 셔터 · 카메라 전환 */
+.bottombar {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  padding: 28px 16px max(18px, env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, rgba(0,0,0,.6) 40%);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.legend { display: flex; justify-content: center; gap: 16px; font-size: 12px; color: rgba(255,255,255,.92); }
+.legend span { display: flex; align-items: center; gap: 6px; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
-.dot.ref { border: 1.5px dashed #fff; }
-.dot.ok { background: #22c55e; }
-.dot.bad { background: #ef4444; }
+.dot.ref { width: 16px; height: 0; border-radius: 0; border-top: 2px dashed #fff; }
+.dot.ok { background: var(--ok); }
+.dot.fix { background: var(--fix); }
+.controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; justify-items: center; }
+.shutter {
+  width: 78px; height: 78px; padding: 0; border-radius: 50%; cursor: pointer;
+  background: #fff; border: 5px solid #0E0C0A; box-shadow: 0 0 0 4px #fff;
+}
+.shutter:active { transform: scale(.94); }
 
-/* 결과 화면: 원본·보정본 선택 */
-.methods { display: flex; gap: 6px; flex-wrap: wrap; }
-.methods button { flex: 1; padding: 8px 10px; font-size: 14px; }
-.methods button.on { background: #111; color: #fff; border-color: #111; }
-/* 저장할 사진으로 고른 쪽에 테두리 */
-.compare figure { cursor: pointer; border: 3px solid transparent; border-radius: 15px; padding: 2px; }
-.compare figure.picked { border-color: #111; }
-.compare figcaption small { display: block; font-weight: 400; color: #888; font-size: 12px; }
-.hint.left { text-align: left; }
+/* ── 06 편집: 사진은 위에 고정, 도구는 아래 ── */
+.page.edit { height: 100dvh; min-height: 0; gap: 10px; }
+.photo {
+  position: relative; flex: 1 1 auto; min-height: 180px;
+  background: var(--card); border: 8px solid var(--card); box-shadow: 0 8px 20px rgba(60, 40, 20, .14);
+  touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.photo canvas, .photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+.photo [hidden] { display: none; }
+.compare-toggle {
+  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+  display: flex; padding: 3px; border-radius: 999px; background: rgba(26, 22, 18, .8);
+}
+.compare-toggle button {
+  min-height: 36px; padding: 0 14px; border: 0; border-radius: 999px; cursor: pointer;
+  background: transparent; color: #E9DFCF; font: 500 13px var(--sans);
+}
+.compare-toggle button.on { background: var(--card); color: var(--ink); font-weight: 700; }
 
-/* 결과 화면: 필름 효과 슬라이더 묶음 */
-.film { border: 1px solid #ddd; border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
-.film legend { font-weight: 700; padding: 0 6px; }
-.film button { align-self: flex-start; padding: 8px 12px; font-size: 14px; }
+.tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--line); flex: none; }
+.tabs button {
+  position: relative; min-height: 44px; border: 0; border-bottom: 2.5px solid transparent; background: transparent; cursor: pointer;
+  font: 500 15px var(--sans); color: var(--ink2);
+}
+.tabs button.on { color: var(--ink); font-weight: 700; border-bottom-color: var(--ink); }
+.tabs .mark { position: absolute; top: 10px; margin-left: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--burnt); }
+/* 도구 칸 높이를 고정해서 탭을 바꿔도 사진 크기가 출렁이지 않음 */
+.tool { flex: none; min-height: 132px; display: flex; flex-direction: column; gap: 10px; }
+.chips { display: flex; gap: 8px; overflow-x: auto; margin: 0 -24px; padding: 0 24px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chips button {
+  flex: none; min-height: 38px; padding: 0 14px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: transparent; color: var(--ink); font: 500 14px var(--sans);
+}
+.chips button.on { background: var(--ink); border-color: var(--ink); color: var(--card); font-weight: 700; }
+.slider { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--ink2); }
+.slider span { display: flex; justify-content: space-between; }
+.slider b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.slider input { width: 100%; accent-color: var(--burnt); height: 28px; }
+.dock-row { display: grid; grid-template-columns: 1fr 1.6fr; gap: 10px; }
+.dock-row .btn { padding: 0 12px; font-size: 15px; }
+.dock-links { display: flex; justify-content: center; gap: 16px; margin-top: -4px; }
+.page.edit .dock { margin-top: 0; padding-top: 6px; background: var(--paper); }
 
-/* 결과 화면: 원본(왼쪽 고정) · 보정(오른쪽), 좁은 화면에선 위아래 */
-.panel.wide { max-width: 960px; }
-.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.compare.single { grid-template-columns: 1fr; max-width: 480px; width: 100%; margin: 0 auto; }
-.compare figure { margin: 0; display: flex; flex-direction: column; gap: 6px; }
-.compare figcaption { text-align: center; font-weight: 600; color: #555; }
-@media (max-width: 640px) { .compare { grid-template-columns: 1fr; } }
+/* ── 포즈 라이브러리(src/pose_recommend)가 쓰는 공통 클래스 ── */
+.panel {
+  width: 100%; max-width: 480px; padding: max(20px, env(safe-area-inset-top)) 20px 32px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.panel h1 { margin: 0; font: 700 24px var(--serif); }
+.lead { margin: 0; color: var(--ink2); line-height: 1.6; }
+.status { margin: 0; color: var(--error); font-size: 14px; }
+.file {
+  display: block; padding: 16px; border: 1.5px dashed var(--ink2); border-radius: 14px;
+  text-align: center; cursor: pointer; font-weight: 700; background: var(--card);
+}
+.file input { display: none; }
+.preview { width: 100%; max-height: 55dvh; object-fit: contain; border: 8px solid var(--card); background: var(--card); box-shadow: 0 8px 20px rgba(60, 40, 20, .14); }
+.panel button {
+  min-height: 44px; padding: 0 16px; border-radius: 999px; border: 1.5px solid var(--ink);
+  background: transparent; color: var(--ink); font: 500 15px var(--sans); cursor: pointer;
+}
+.panel button.primary { background: var(--ink); color: var(--card); font-weight: 700; }
+.panel button:disabled { opacity: .35; cursor: default; }
+.actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }

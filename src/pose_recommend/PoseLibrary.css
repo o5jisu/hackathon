@@ -1,42 +1,46 @@
-/* 포즈 라이브러리 화면 (기존 .panel · .file · .hint · .status · button 스타일 위에 덧붙임) */
+/* 포즈 라이브러리 화면 (App.css의 .panel · .file · .hint · .status 위에 덧붙임, 색은 index.css의 변수) */
 .pl-head { display: flex; align-items: center; gap: 10px; }
-.pl-head h1 { font-size: 24px; word-break: keep-all; }
-.pl-back { padding: 6px 12px; font-size: 18px; }
-.pl-box { border: 1px solid #ddd; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: #fff; }
-.pl-box h2 { margin: 0; font-size: 18px; }
-.pl-count { color: #888; font-weight: 500; font-size: 15px; }
+.pl-head h1 { word-break: keep-all; }
+.panel .pl-back { min-height: 44px; width: 44px; padding: 0; border: 0; font-size: 20px; }
+.pl-box { border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 10px; background: var(--card); }
+.pl-box h2 { margin: 0; font: 700 18px var(--serif); }
+.pl-count { color: var(--ink2); font: 500 14px var(--sans); }
 .pl-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .pl-row .status { flex: 1; }
 
 .pl-spin {
   width: 18px; height: 18px; border-radius: 50%; flex: none;
-  border: 3px solid #ddd; border-top-color: #111; animation: pl-spin 0.8s linear infinite;
+  border: 3px solid var(--sand); border-top-color: var(--burnt); animation: pl-spin 0.8s linear infinite;
 }
 @keyframes pl-spin { to { transform: rotate(360deg); } }
 
-.pl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.pl-tile { padding: 0; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; font-size: 13px; }
-.pl-tile span { padding: 6px; word-break: keep-all; }
-.pl-thumb { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; display: block; background: #eee; }
+.pl-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.panel .pl-tile {
+  padding: 0; border: 0; border-radius: 0; background: transparent; min-height: 0;
+  display: flex; flex-direction: column; gap: 4px; font-size: 13px; text-align: left;
+}
+.pl-tile span { padding: 0 2px; word-break: keep-all; }
+.pl-thumb { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; display: block; background: var(--sand); border: 4px solid #fff; box-shadow: 0 3px 8px rgba(60, 40, 20, .12); }
 
 .pl-results { display: flex; flex-direction: column; gap: 10px; }
-.pl-summary { margin: 0; color: #444; }
-.pl-card { display: grid; grid-template-columns: 96px 1fr; gap: 12px; border: 1px solid #eee; border-radius: 12px; padding: 10px; }
-.pl-card.draft { border-color: #facc15; background: #fffbea; }
-.pl-card-img { width: 96px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 8px; background: #eee; }
+.pl-summary { margin: 0; color: var(--ink2); font-family: var(--serif); }
+.pl-card { display: grid; grid-template-columns: 96px 1fr; gap: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+.pl-card.draft { border: 1.5px solid var(--burnt); border-radius: 12px; padding: 10px; background: var(--burnt-soft); }
+.pl-card-img { width: 96px; aspect-ratio: 3 / 4; object-fit: cover; background: var(--sand); border: 4px solid #fff; }
 .pl-card-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.pl-card-body p { margin: 0; line-height: 1.45; word-break: keep-all; }
+.pl-card-body p { margin: 0; line-height: 1.5; word-break: keep-all; }
 .pl-card-title { display: flex; justify-content: space-between; gap: 8px; }
-.pl-score { color: #16a34a; font-weight: 700; flex: none; }
-.pl-tip { color: #555; font-size: 14px; }
-.pl-badge { font-size: 13px; color: #a16207; font-weight: 600; }
+.pl-score { color: var(--burnt); font-weight: 700; flex: none; }
+.pl-tip { color: var(--ink2); font-size: 14px; }
+.pl-badge { font-size: 13px; color: var(--burnt); font-weight: 700; }
 
-.pl-field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; font-weight: 600; }
+.pl-field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; font-weight: 700; }
 .pl-field input, .pl-field textarea {
-  font: inherit; font-weight: 400; font-size: 16px; padding: 8px 10px; border: 1px solid #ccc; border-radius: 8px; resize: vertical;
+  font: 400 16px var(--sans); padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; resize: vertical;
+  background: #fff; color: var(--ink);
 }
 .pl-facts { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 14px; }
-.pl-facts dt { color: #888; }
+.pl-facts dt { color: var(--ink2); }
 .pl-facts dd { margin: 0; word-break: keep-all; }
 
 @media (max-width: 400px) { .pl-card { grid-template-columns: 72px 1fr; } .pl-card-img { width: 72px; } }

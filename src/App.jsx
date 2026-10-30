@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   createLandmarkers, toPixels, toFrame, frameRect, mirror, bodyFrame, normalize, compare, adviceFor,
-  TARGETS, HEAD_PTS, BONES, compareHead, headAdvice, MATCH_T, statsOf, matchColor, blendImages, getSegmenter, skinMaskOf, toAnalysisCanvas, smoothPoints,
+  TARGETS, HEAD_PTS, BONES, compareHead, headAdvice, MATCH_T, REF_VIS, statsOf, matchColor, blendImages, getSegmenter, skinMaskOf, toAnalysisCanvas, smoothPoints,
 } from './pose'
 import { NO_FILM, hasFilm, applyFilm } from './film'
 import { NO_ADJUST, hasAdjust, applyAdjust } from './adjust'
 import { POSE_RECOMMEND_ENABLED } from './pose_recommend/config'
 import PoseLibrary from './pose_recommend/PoseLibrary'
+import Home from './screens/Home'
+import Reference from './screens/Reference'
 import './App.css'
 
 const NO_ALIGN = { scale: 1, dx: 0, dy: 0 } // 참고 사진 처음 상태: 가운데에 원래 비율로 가장 크게
@@ -18,16 +20,26 @@ const ANALYSIS_MAX = 960 // 포즈 인식에 넣는 카메라 화면의 긴 변 
 const PREVIEW_MAX = 1440 // 결과 화면 미리보기의 긴 변. 슬라이더는 이 크기로 빠르게 계산하고, 저장할 때만 원본 크기로 다시 계산
 
 export default function App() {
-  const [screen, setScreen] = useState('upload') // upload | coaching | captured | library(포즈 라이브러리)
-  const [status, setStatus] = useState('AI 모델을 불러오는 중…')
-  const [ready, setReady] = useState(false)
+  // 화면: home(01) → reference(02 참고 사진 확인) → coaching(03) → captured(06 편집). library = 포즈 라이브러리
+  const [screen, setScreen] = useState('home')
+  const [ready, setReady] = useState(false) // 포즈 인식 모델 준비 완료
+  const [modelError, setModelError] = useState('') // 모델 받기 실패 (로딩 중 표시와 다른 모양으로 보여 줌)
+  const [analyzing, setAnalyzing] = useState(false) // 참고 사진 포즈를 읽는 중
+  const [error, setError] = useState('') // 지금 화면에 보여 줄 오류 문장 (사진 인식 실패, 카메라 실패 등)
   const [refUrl, setRefUrl] = useState(null)
+  const [refInfo, setRefInfo] = useState({ mode: 'full', count: 0 }) // 전신/상반신, 비교할 관절 수
   const [message, setMessage] = useState('')
+  const [tipPart, setTipPart] = useState(null) // 안내 중인 몸 부위 { kind, side } → 몸 그림에 표시
   const [score, setScore] = useState(0)
+  const [moveMode, setMoveMode] = useState(false) // 참고 사진 틀 옮기기 모드 (평소엔 잠가서 실수로 안 움직이게)
   const [matchedCapture, setMatchedCapture] = useState(null) // 색감 적용 버튼을 누른 뒤 계산한 결과
   const [colorMatchStrength, setColorMatchStrength] = useState(0.7)
   const [adjust, setAdjust] = useState(NO_ADJUST) // 직접 조정 (노출·밝기·대비·하이라이트·그림자·채도, 각 -1~1)
-  const [keepOriginal, setKeepOriginal] = useState(false) // 저장할 사진: true면 원본, false면 보정본(보정이 있을 때)
+  const [view, setView] = useState('edited') // 편집 화면에 보여 줄 사진: ref(참고 사진) | original | edited
+  const [holding, setHolding] = useState(false) // 사진을 누르고 있는 동안 원본 보기
+  const [tab, setTab] = useState('color') // 편집 탭: color | adjust | film
+  const [adjustKey, setAdjustKey] = useState('exposure') // 조정 탭에서 고른 항목
+  const [filmKey, setFilmKey] = useState('grain') // 필름 탭에서 고른 항목
   const [busy, setBusy] = useState(false)
   const [saving, setSaving] = useState(false) // 원래 해상도로 보정을 다시 계산해 저장하는 중
   const [film, setFilm] = useState(NO_FILM) // 필름 질감 효과 (그레인·소프트 포커스·비네팅·따뜻함, 각 0~1)
@@ -40,7 +52,6 @@ export default function App() {
   const [videoAspect, setVideoAspect] = useState(9 / 16) // 카메라 영상 가로/세로 비율 (영상이 오면 실제 값으로 바뀜)
   const [align, setAlign] = useState(NO_ALIGN) // 참고 사진 틀 크기·위치 (끌기·두 손가락으로 조절)
   const [cropToRef, setCropToRef] = useState(true) // 촬영 사진을 참고 사진 틀에 맞춰 자를지
-  const [upperBody, setUpperBody] = useState(false) // 상반신 사진이면 업로드 화면에 안내
   const [stream, setStream] = useState(null) // 켜져 있는 카메라 영상
 
   const models = useRef(null)
@@ -56,47 +67,55 @@ export default function App() {
   const originalRef = useRef(null) // 원본 캔버스 (왼쪽, 고정)
   const previewRef = useRef(null) // 보정 미리보기 캔버스 (오른쪽, 슬라이더로 바뀜)
   const shots = useRef(null) // 촬영 결과 { full: 카메라 전체, crop: 참고 사진 틀만큼 자른 것 } (캔버스)
-  const originalCapture = useRef(null) // { image: ImageData, canvas } 편집 중 바꾸지 않는 원본 (full 또는 crop)
+  const originalCapture = useRef(null) // { canvas, preview } 편집 중 바꾸지 않는 원본 (full 또는 crop)
 
   // 1) 앱 시작 시 AI 모델 로드
   useEffect(() => {
     createLandmarkers()
-      .then((m) => { models.current = m; setReady(true); setStatus('') })
-      .catch((e) => setStatus('모델 로드 실패: 인터넷 연결을 확인해 주세요. (' + e.message + ')'))
+      .then((m) => { models.current = m; setReady(true) })
+      .catch((e) => setModelError(e.message))
   }, [])
 
-  // 2) 참고 사진 업로드 → 포즈 분석 (포즈 라이브러리에서 고른 사진도 같은 함수로 들어옴)
-  function onUpload(e) {
-    const file = e.target.files?.[0]
-    if (file) loadReference(file)
-  }
-
+  // 2) 참고 사진 → 포즈 분석 → 성공하면 02 참고 사진 확인 화면으로 (포즈 라이브러리에서 고른 사진도 같은 함수로 들어옴)
+  // 실패하면 이전 참고 사진은 그대로 두고 지금 화면에 이유를 보여 줌
   async function loadReference(file) {
-    if (!models.current) return setStatus('AI 모델을 아직 불러오는 중이에요. 잠시 후 다시 골라 주세요.')
-    if (refUrl) URL.revokeObjectURL(refUrl)
-    setStatus('참고 사진의 포즈를 분석하는 중…')
+    if (!models.current) return setError('포즈 인식 모델을 아직 준비하는 중이에요. 잠시 후 다시 골라 주세요.')
+    setError('')
+    setAnalyzing(true)
     const url = URL.createObjectURL(file)
-    const img = new Image()
-    img.src = url
-    await img.decode()
-    const res = models.current.image.detect(toAnalysisCanvas(img))
-    const lms = res.landmarks?.[0]
-    const pts = lms && toPixels(lms, img.naturalWidth, img.naturalHeight)
-    const f = pts && bodyFrame(pts) // 골반이 안 보이면 상반신 모드로
-    if (!f) {
-      setStatus('사람의 두 어깨가 잘 보이는 사진을 골라 주세요.')
-      setRefUrl(null); refN.current = null
-      return
+    try {
+      const img = new Image()
+      img.src = url
+      await img.decode()
+      const res = models.current.image.detect(toAnalysisCanvas(img))
+      const lms = res.landmarks?.[0]
+      const pts = lms && toPixels(lms, img.naturalWidth, img.naturalHeight)
+      const f = pts && bodyFrame(pts) // 골반이 안 보이면 상반신 모드로
+      if (!f) {
+        URL.revokeObjectURL(url)
+        setError(lms
+          ? '두 어깨가 잘 보이지 않아요. 상반신이나 전신이 정면에 가깝게 나온 사진을 골라 주세요.'
+          : '사진에서 사람을 찾지 못했어요. 한 사람이 크게 나온 사진을 골라 주세요.')
+        return
+      }
+      if (refUrl) URL.revokeObjectURL(refUrl)
+      refImg.current = img
+      refPts.current = pts
+      refN.current = normalize(pts, f)
+      refMode.current = f.mode
+      // 판정에 실제로 쓰는 관절 수 (compare·compareHead와 같은 기준: 참고 사진에서 REF_VIS 이상 보이는 곳)
+      const count = [...TARGETS, 0].filter((j) => pts[j].v >= REF_VIS && (f.mode === 'full' || j < 23)).length
+      setRefInfo({ mode: f.mode, count })
+      setRefAspect(img.naturalWidth / img.naturalHeight)
+      setAlign(NO_ALIGN) // 새 사진은 원래 비율·가장 큰 크기로 시작
+      setRefUrl(url)
+      setScreen('reference')
+    } catch {
+      URL.revokeObjectURL(url)
+      setError('사진을 열 수 없어요. 다른 사진(JPG·PNG)을 골라 주세요.')
+    } finally {
+      setAnalyzing(false)
     }
-    refImg.current = img
-    refPts.current = pts
-    refN.current = normalize(pts, f)
-    refMode.current = f.mode
-    setUpperBody(f.mode === 'upper')
-    setRefAspect(img.naturalWidth / img.naturalHeight)
-    setAlign(NO_ALIGN) // 새 사진은 원래 비율·가장 큰 크기로 시작
-    setRefUrl(url)
-    setStatus('')
   }
 
   // 3) 카메라 켜기 (버튼 클릭 직후에 카메라 권한을 요청해야 폰에서 동작)
@@ -117,11 +136,19 @@ export default function App() {
   }
 
   async function startCoaching() {
+    setError('')
+    setMoveMode(false)
     try {
       await openCamera(facing)
     } catch {
-      setStatus('카메라를 켤 수 없어요. 권한을 허용했는지, https 주소로 접속했는지 확인해 주세요.')
+      setError('카메라를 켤 수 없어요. 카메라 권한을 허용했는지, https 주소로 접속했는지 확인해 주세요.')
+      setScreen('reference')
     }
+  }
+
+  // 코칭을 끝내고 참고 사진 확인 화면으로
+  function leaveCoaching() {
+    stopCamera(); setShowSettings(false); setMoveMode(false); setScreen('reference')
   }
 
   async function switchCamera() {
@@ -269,27 +296,31 @@ export default function App() {
       const tip = worst === 'head' ? headAdvice(headEma, mirrored)
         : worst !== null ? adviceFor(worst, ref, liveN, mirrored)
         : outside > 0 ? '전신이 화면에 나오도록 한 걸음 물러나 보세요' : null
+      // 몸 그림에 표시할 부위. 왼쪽/오른쪽은 "화면에서 보이는 쪽" (몸 기준 이름은 안내 문장에 있음)
+      const part = worst === 'head' ? { kind: 'head' }
+        : worst !== null ? { kind: PART_KIND[worst], side: liveN[worst].x < 0 ? 'l' : 'r' } : null
       if (total === 0) show('참고 사진에 팔다리가 잘 보이지 않아요', 0)
       else if (judged === 0) show('관절이 잘 보이도록 카메라 앞에 서 주세요', 0)
       else if (!tip) show('좋아요! 셔터 버튼을 눌러 찍어 보세요', 100)
-      else if (pct >= GOOD_PCT) show(`거의 맞았어요! ${tip}`, pct)
-      else show(tip, pct)
+      else if (pct >= GOOD_PCT) show(`거의 맞았어요! ${tip}`, pct, part)
+      else show(tip, pct, part)
     }
 
     // 점수는 매번 바꾸고, 안내 문장은 한 번 띄우면 최소 TIP_HOLD_MS 동안 유지 (멀리서 읽을 시간을 줌)
-    function show(text, pct) {
+    function show(text, pct, part = null) {
       setScore(pct)
       const t = performance.now()
       if (text === shownText || t - shownAt < TIP_HOLD_MS) return
       shownText = text; shownAt = t
-      setMessage(text)
+      setMessage(text); setTipPart(part)
     }
     raf = requestAnimationFrame(loop)
     return () => { stopped = true; cancelAnimationFrame(raf) }
   }, [screen, facing])
 
-  // 참고 사진 틀 조절: 한 손가락 = 끌어서 이동, 두 손가락 = 벌리거나 오므려 크기 조절
+  // 참고 사진 틀 조절 (위치 조정 모드에서만): 한 손가락 = 끌어서 이동, 두 손가락 = 벌리거나 오므려 크기 조절
   function onPointerDown(e) {
+    if (!moveMode) return
     e.currentTarget.setPointerCapture(e.pointerId)
     const t = touches.current
     t.pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
@@ -340,7 +371,7 @@ export default function App() {
     shots.current = { full, crop }
     resetEdits() // 새 사진에는 이전 사진의 보정(색감·직접 조정·필름)을 남기지 않음
     selectShot(true) // 기본: 참고 사진에 맞춰 자른 사진
-    setShowSettings(false)
+    setShowSettings(false); setMoveMode(false)
     stopCamera()
     setScreen('captured')
   }
@@ -377,32 +408,32 @@ export default function App() {
     // 색 통계·보호 지도는 사진 크기와 무관(비율로 읽음) → 저장할 때 원본 크기에도 같은 값으로 다시 적용
     const src = statsOf(canvas, shotMask), ref = statsOf(refImg.current, refMask)
     setMatchedCapture({ src, ref, mask: shotMask, preview: matchColor(preview, src, ref, shotMask) })
-    setKeepOriginal(false)
+    setView('edited')
     setBusy(false)
   }
 
   // 모든 보정(색감·직접 조정·필름)을 지우고 원본으로
   function resetEdits() {
-    setMatchedCapture(null); setColorMatchStrength(0.7); setAdjust(NO_ADJUST); setFilm(NO_FILM); setKeepOriginal(false)
+    setMatchedCapture(null); setColorMatchStrength(0.7); setAdjust(NO_ADJUST); setFilm(NO_FILM); setView('edited')
   }
 
-  // 보정 미리보기(previewCapture): 슬라이더가 바뀔 때마다 원본에서 새로 만들어 오른쪽에만 그림
+  // 보정 미리보기: 슬라이더가 바뀔 때마다 원본(미리보기 크기)에서 새로 만들어 그림
   // 원본 → 참고 사진 색감(강도만큼) → 직접 조정 → 필름 효과. 원본은 그대로 둠
   const hasEdits = matchedCapture !== null || hasAdjust(adjust) || hasFilm(film)
-  const savingEdited = hasEdits && !keepOriginal
   useEffect(() => {
     if (!hasEdits || !previewRef.current) return
     putImage(previewRef.current, renderEdits(originalCapture.current.preview, matchedCapture?.preview, colorMatchStrength, adjust, film))
   }, [hasEdits, matchedCapture, colorMatchStrength, adjust, film, cropToRef])
 
   // 저장: 미리보기가 아니라 원래 해상도 사진에 같은 보정을 다시 적용해서 내보냄 (큰 사진은 몇 초 걸릴 수 있음)
-  async function save() {
+  // edited = true면 보정본, false면 원본을 저장
+  async function save(edited) {
     setSaving(true)
     await new Promise((r) => setTimeout(r, 30)) // '저장 준비 중'이 먼저 보이도록
     try {
       const { canvas } = originalCapture.current
       let out = canvas
-      if (savingEdited) {
+      if (edited) {
         const full = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height)
         const m = matchedCapture
         out = document.createElement('canvas')
@@ -421,50 +452,44 @@ export default function App() {
   }
 
   // ── 화면 ──
-  const scoreColor = score >= GOOD_PCT ? '#22c55e' : score >= 60 ? '#facc15' : '#fff'
+  const good = score >= GOOD_PCT
   // 참고 사진 틀 위치 (카메라 상자 대비 %). 카메라 루프의 관절 좌표와 같은 frameRect 계산을 씀
   const fr = frameRect(refAspect, videoAspect, align)
   const frameStyle = { left: `${fr.x * 100}%`, top: `${fr.y * 100}%`, width: `${fr.w * 100}%`, height: `${fr.h * 100}%` }
+  // 편집 화면에 실제로 보이는 사진: 누르고 있으면 원본, 보정이 없으면 '보정'도 원본
+  const shown = holding ? 'original' : view === 'edited' && !hasEdits ? 'original' : view
+  const goHome = () => { setError(''); setScreen('home') }
 
   return (
     <div className="app">
-      {screen === 'upload' && (
-        <section className="panel">
-          <h1>포즈메이트</h1>
-          <p className="lead">따라 하고 싶은 사진을 올리면, 카메라 화면에 겹쳐 보여 주며 포즈를 맞추도록 안내해 드려요.</p>
-          <label className="file">
-            참고 사진 고르기
-            <input type="file" accept="image/*" onChange={onUpload} disabled={!ready} />
-          </label>
-          {refUrl && <img className="preview" src={refUrl} alt="참고 사진" />}
-          {refUrl && upperBody && <p className="hint">상반신 사진이라 어깨·팔·얼굴만 비교해요.</p>}
-          {status && <p className="status">{status}</p>}
-          <button className="primary" disabled={!ready || !refN.current} onClick={startCoaching}>
-            코칭 시작
-          </button>
-          <p className="hint">폰을 세워 두고 2~3m 떨어져 서 주세요.</p>
-          {POSE_RECOMMEND_ENABLED && (
-            <button onClick={() => setScreen('library')}>📚 포즈 라이브러리 · 배경에 맞는 포즈 추천</button>
-          )}
-        </section>
+      {screen === 'home' && (
+        <Home ready={ready} modelError={modelError} analyzing={analyzing} error={error}
+          onPick={loadReference}
+          onLibrary={POSE_RECOMMEND_ENABLED ? () => { setError(''); setScreen('library') } : null} />
       )}
 
       {/* 포즈 추천 기능 (src/pose_recommend). 고른 포즈 사진은 참고 사진으로 불러와 기존 오버레이·판정을 그대로 씀 */}
       {POSE_RECOMMEND_ENABLED && screen === 'library' && (
         <PoseLibrary
           detect={(canvas) => models.current?.image.detect(canvas).landmarks?.[0]?.map((l) => [l.x, l.y]) ?? null}
-          onBack={() => setScreen('upload')}
+          onBack={goHome}
           onUsePose={(pose) => {
-            setScreen('upload')
-            loadReference(pose.image).catch(() => setStatus('포즈 사진을 불러오지 못했어요.'))
+            setScreen('home') // 인식에 실패하면 첫 화면에서 이유를 보여 줌, 성공하면 참고 사진 확인 화면으로
+            loadReference(pose.image)
           }}
         />
       )}
 
+      {screen === 'reference' && refPts.current && (
+        <Reference url={refUrl} size={{ w: refImg.current.naturalWidth, h: refImg.current.naturalHeight }}
+          pts={refPts.current} info={refInfo} analyzing={analyzing} error={error}
+          onChange={loadReference} onStart={startCoaching} onBack={goHome} />
+      )}
+
       {screen === 'coaching' && (
         <section className="stage">
-          {/* 카메라 상자 = 영상 비율 그대로(잘림 없음). 그 위의 참고 사진 틀 = 촬영 후 잘릴 영역 (끌기·두 손가락으로 조절) */}
-          <div className="camera" style={{ '--va': videoAspect }}
+          {/* 카메라 상자 = 영상 비율 그대로(잘림 없음). 그 위의 참고 사진 틀 = 촬영 후 잘릴 영역 (위치 조정 모드에서만 끌기·두 손가락) */}
+          <div className={`camera${moveMode ? ' moving' : ''}`} style={{ '--va': videoAspect }}
             onPointerDown={onPointerDown} onPointerMove={onPointerMove}
             onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
             <video ref={videoRef} autoPlay playsInline muted className={facing === 'user' ? 'mirrored' : ''} />
@@ -476,151 +501,227 @@ export default function App() {
             <canvas ref={canvasRef} />
           </div>
 
-          {/* 왼쪽 위: 나가기 */}
-          <button className="round glass back" onClick={() => { stopCamera(); setShowSettings(false); setScreen('upload') }} aria-label="나가기">
-            ←
+          <button className="round glass back" onClick={leaveCoaching} aria-label="나가기">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+          </button>
+          <button className="round glass gear" onClick={() => setShowSettings((v) => !v)} aria-label={showSettings ? '설정 닫기' : '설정'} aria-expanded={showSettings}>
+            {showSettings
+              ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              : <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></svg>}
           </button>
 
-          {/* 위: 점수 + 안내 (최대 2줄) */}
-          <div className="topbar">
-            <b style={{ color: scoreColor }}>{score}%</b>
-            <span>{message || '준비 중…'}</span>
+          {/* 위: 멀리서도 보이는 큰 점수 + 진행 막대(90% 지점 표시) */}
+          <div className="hud" role="status" aria-label={`포즈 일치도 ${score}%`}>
+            <div className="score" style={{ color: good ? 'var(--ok)' : '#fff' }}><b>{score}</b><span>%</span></div>
+            <div className="meter">
+              <i style={{ width: `${score}%`, background: good ? 'var(--ok)' : 'var(--fix)' }} />
+              <span className="goal" style={{ left: `${GOOD_PCT}%` }} />
+            </div>
+            <span className="meter-cap">{good ? '찍기 좋은 자세예요' : `${GOOD_PCT}%를 넘으면 찍기 좋아요`}</span>
           </div>
 
-          {/* 설정: 평소엔 접어 두고 ⚙ 버튼을 누를 때만 펼침 */}
+          {moveMode ? (
+            <div className="tip move" role="status">
+              <p>사진을 끌어 옮기고, 두 손가락으로 크기를 바꿔요</p>
+              <button className="pill" onClick={() => setMoveMode(false)}>완료</button>
+            </div>
+          ) : (
+            <div className="tip" aria-live="polite">
+              <BodyHint part={tipPart} good={good} />
+              <p>{message || '준비 중…'}</p>
+            </div>
+          )}
+
+          {/* 설정: 평소엔 접어 두고 ⚙를 누를 때만 펼침 */}
           {showSettings && (
             <div className="settings">
               <label>
-                사진 투명도 {Math.round((1 - refOpacity) * 100)}%
+                참고 사진 투명도 {Math.round((1 - refOpacity) * 100)}%
                 <input type="range" min="0" max="100" step="5" value={Math.round((1 - refOpacity) * 100)}
                   onChange={(e) => setRefOpacity(1 - Number(e.target.value) / 100)} />
               </label>
               <label>
-                사진 크기 {Math.round(align.scale * 100)}%
+                참고 사진 크기 {Math.round(align.scale * 100)}%
                 <input type="range" min={MIN_SCALE} max={MAX_SCALE} step="0.05" value={align.scale}
                   onChange={(e) => setAlign((a) => ({ ...a, scale: Number(e.target.value) }))} />
               </label>
-              <p className="tip">화면을 끌면 사진이 움직이고, 두 손가락으로 크기를 바꿀 수 있어요.</p>
               <div className="row">
+                <button onClick={() => { setMoveMode(true); setShowSettings(false) }}>위치 조정</button>
                 <button onClick={() => setAlign(NO_ALIGN)}>원래 크기로</button>
                 <button onClick={() => setShowGrid((g) => !g)}>{showGrid ? '격자 끄기' : '격자 켜기'}</button>
-              </div>
-              <div className="legend">
-                <span><i className="dot ref" />흰 점선: 참고 사진 포즈</span>
-                <span><i className="dot ok" />초록색: 기준 위치에 가까움 (90% 이상 맞으면 나머지 뼈대도 초록)</span>
-                <span><i className="dot bad" />빨간색: 위치를 조정해 보세요</span>
               </div>
             </div>
           )}
 
-          {/* 아래: 설정 · 셔터, 오른쪽 구석에 카메라 전환 */}
+          {/* 아래: 범례(항상) · 셔터(가운데) · 카메라 전환(오른쪽) */}
           <div className="bottombar">
-            <button className="round glass" onClick={() => setShowSettings((v) => !v)} aria-label="설정">
-              {showSettings ? '✕' : '⚙'}
-            </button>
-            <button className="shutter" onClick={capture} aria-label="촬영" />
-            {canSwitch && (
-              <button className="round glass flip" onClick={switchCamera}
-                aria-label={facing === 'user' ? '뒤 카메라로 전환' : '앞 카메라로 전환'}>
-                ⟲
-              </button>
-            )}
+            <div className="legend">
+              <span><i className="dot ref" />참고 포즈</span>
+              <span><i className="dot ok" />맞음</span>
+              <span><i className="dot fix" />고칠 곳</span>
+            </div>
+            <div className="controls">
+              <span />
+              <button className="shutter" onClick={capture} aria-label="촬영" />
+              {canSwitch ? (
+                <button className="round glass flip" onClick={switchCamera}
+                  aria-label={facing === 'user' ? '뒤 카메라로 전환' : '앞 카메라로 전환'}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M4 9a8 8 0 0 1 14-3l2 2M20 15a8 8 0 0 1-14 3l-2-2" /><path d="M20 4v4h-4M4 20v-4h4" /></svg>
+                </button>
+              ) : <span />}
+            </div>
           </div>
         </section>
       )}
 
       {screen === 'captured' && (
-        <section className="panel wide">
-          <h2>촬영 완료</h2>
-          {/* 원본(왼쪽 고정) · 보정본(오른쪽). 누르면 저장할 사진으로 선택 */}
-          <div className={hasEdits ? 'compare' : 'compare single'}>
-            <figure className={!savingEdited ? 'picked' : ''} onClick={() => setKeepOriginal(true)}>
-              <canvas ref={originalRef} className="result" />
-              <figcaption>원본 {!savingEdited && '✓'}</figcaption>
-            </figure>
-            {hasEdits && (
-              <figure className={savingEdited ? 'picked' : ''} onClick={() => setKeepOriginal(false)}>
-                <canvas ref={previewRef} className="result" />
-                <figcaption>
-                  보정본 {savingEdited && '✓'}
-                  <small>
-                    {[matchedCapture && `색감 ${Math.round(colorMatchStrength * 100)}%`, hasAdjust(adjust) && '직접 조정', hasFilm(film) && '필름 효과']
-                      .filter(Boolean).join(' + ')}
-                  </small>
-                </figcaption>
-              </figure>
-            )}
-          </div>
-          {hasEdits && (
-            <div className="methods" role="radiogroup" aria-label="저장할 사진">
-              <button role="radio" aria-checked={!savingEdited} className={!savingEdited ? 'on' : ''} onClick={() => setKeepOriginal(true)}>원본으로 저장</button>
-              <button role="radio" aria-checked={savingEdited} className={savingEdited ? 'on' : ''} onClick={() => setKeepOriginal(false)}>보정본으로 저장</button>
-            </div>
-          )}
+        <section className="page edit">
+          <header className="bar-head">
+            <button className="icon-btn" onClick={startCoaching} aria-label="다시 찍기">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+            </button>
+            <h1>다듬기</h1>
+            <button className="text-btn" disabled={!hasEdits} onClick={resetEdits}>되돌리기</button>
+          </header>
 
-          {/* 참고 사진 색감: 사람(얼굴·피부·머리카락·옷)은 그대로, 배경만 */}
-          <fieldset className="film">
-            <legend>참고 사진 색감</legend>
-            <p className="hint left">얼굴·피부·머리카락·옷은 원래 색 그대로 두고 배경 분위기만 바꿔요.</p>
-            {!matchedCapture ? (
-              <button className="primary" disabled={busy} onClick={applyMatch}>
-                {busy ? '색감 계산 중…' : '참고 사진 색감 적용'}
+          {/* 사진은 위에 고정: 도구를 만지는 동안에도 결과가 보임. 누르고 있으면 원본 */}
+          <div className="photo" onPointerDown={() => setHolding(true)} onPointerUp={() => setHolding(false)}
+            onPointerLeave={() => setHolding(false)} onPointerCancel={() => setHolding(false)}
+            onContextMenu={(e) => e.preventDefault()}>
+            <canvas ref={originalRef} hidden={shown !== 'original'} />
+            <canvas ref={previewRef} hidden={shown !== 'edited'} />
+            {shown === 'ref' && <img src={refUrl} alt="참고 사진" draggable={false} />}
+            <div className="compare-toggle" role="radiogroup" aria-label="비교 보기" onPointerDown={(e) => e.stopPropagation()}>
+              {[['ref', '레퍼런스'], ['original', '원본'], ['edited', '보정']].map(([k, label]) => (
+                <button key={k} role="radio" aria-checked={view === k} className={view === k ? 'on' : ''}
+                  onClick={() => setView(k)}>{label}</button>
+              ))}
+            </div>
+          </div>
+          <p className="hint">{hasEdits ? '사진을 누르고 있으면 원본이 보여요' : '아래 도구로 보정하면 여기에서 바로 보여요'}</p>
+
+          <div className="tabs" role="tablist" aria-label="편집 도구">
+            {[['color', '색감'], ['adjust', '조정'], ['film', '필름']].map(([k, label]) => (
+              <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>
+                {label}
+                {k === 'color' && matchedCapture && <i className="mark" aria-label="적용됨" />}
+                {k === 'adjust' && hasAdjust(adjust) && <i className="mark" aria-label="적용됨" />}
+                {k === 'film' && hasFilm(film) && <i className="mark" aria-label="적용됨" />}
               </button>
+            ))}
+          </div>
+
+          <div className="tool" role="tabpanel">
+            {tab === 'color' && (!matchedCapture ? (
+              <>
+                <p className="hint left">참고 사진의 분위기를 배경에만 입혀요. 얼굴·피부·머리카락·옷은 원래 색 그대로예요.</p>
+                <button className="btn primary small" disabled={busy} onClick={applyMatch}>
+                  {busy ? '색감 계산 중… (처음엔 모델을 받아요)' : '참고 사진 색감 적용'}
+                </button>
+              </>
             ) : (
               <>
                 <label className="slider">
-                  강도 {Math.round(colorMatchStrength * 100)}%
+                  <span>색감 강도 <b>{Math.round(colorMatchStrength * 100)}%</b></span>
                   <input type="range" min="0" max="1" step="0.05" value={colorMatchStrength}
                     onChange={(e) => setColorMatchStrength(Number(e.target.value))} />
                 </label>
-                <button onClick={() => setMatchedCapture(null)}>색감 끄기</button>
+                <button className="text-btn" onClick={() => setMatchedCapture(null)}>색감 끄기</button>
+              </>
+            ))}
+
+            {tab === 'adjust' && (
+              <>
+                <div className="chips">
+                  {ADJUST_ITEMS.map(([k, label]) => (
+                    <button key={k} aria-pressed={adjustKey === k} className={adjustKey === k ? 'on' : ''} onClick={() => setAdjustKey(k)}>
+                      {label}{adjust[k] !== 0 && ` ${adjust[k] > 0 ? '+' : ''}${Math.round(adjust[k] * 100)}`}
+                    </button>
+                  ))}
+                </div>
+                <label className="slider">
+                  <span>{ADJUST_ITEMS.find(([k]) => k === adjustKey)[1]} <b>{adjust[adjustKey] > 0 ? '+' : ''}{Math.round(adjust[adjustKey] * 100)}</b></span>
+                  <input type="range" min="-1" max="1" step="0.05" value={adjust[adjustKey]}
+                    onChange={(e) => setAdjust((a) => ({ ...a, [adjustKey]: Number(e.target.value) }))} />
+                </label>
+                {hasAdjust(adjust) && <button className="text-btn" onClick={() => setAdjust(NO_ADJUST)}>조정 초기화</button>}
               </>
             )}
-          </fieldset>
 
-          {/* 직접 조정: 카메라·사진 앱처럼 (-100 ~ +100) */}
-          <fieldset className="film">
-            <legend>직접 조정</legend>
-            {[
-              ['exposure', '노출'], ['brightness', '밝기'], ['contrast', '대비'],
-              ['highlights', '하이라이트'], ['shadows', '그림자'], ['saturation', '채도'],
-            ].map(([key, label]) => (
-              <label key={key} className="slider">
-                {label} {adjust[key] > 0 ? '+' : ''}{Math.round(adjust[key] * 100)}
-                <input type="range" min="-1" max="1" step="0.05" value={adjust[key]}
-                  onChange={(e) => { setAdjust((a) => ({ ...a, [key]: Number(e.target.value) })); setKeepOriginal(false) }} />
-              </label>
-            ))}
-            {hasAdjust(adjust) && <button onClick={() => setAdjust(NO_ADJUST)}>조정 초기화</button>}
-          </fieldset>
-          {/* 필름 질감: 보정 사진(오른쪽)에만 적용, 색감 적용 없이도 쓸 수 있음 */}
-          <fieldset className="film">
-            <legend>필름 효과</legend>
-            {[
-              ['grain', '그레인 (필름 알갱이)'],
-              ['soft', '소프트 포커스 (부드럽게)'],
-              ['vignette', '비네팅 (가장자리 어둡게)'],
-              ['warmth', '따뜻함 (플래시 느낌)'],
-            ].map(([key, label]) => (
-              <label key={key} className="slider">
-                {label} {Math.round(film[key] * 100)}%
-                <input type="range" min="0" max="1" step="0.05" value={film[key]}
-                  onChange={(e) => { setFilm((f) => ({ ...f, [key]: Number(e.target.value) })); setKeepOriginal(false) }} />
-              </label>
-            ))}
-            {hasFilm(film) && <button onClick={() => setFilm(NO_FILM)}>필름 효과 끄기</button>}
-          </fieldset>
-          <div className="actions">
-            <button onClick={() => selectShot(!cropToRef)}>
-              {cropToRef ? '자르기 전 전체 사진 보기' : '참고 사진에 맞춰 자르기'}
-            </button>
-            {hasEdits && <button onClick={resetEdits}>원본으로 되돌리기</button>}
-            <button className="primary" disabled={saving} onClick={save}>{saving ? '저장 준비 중…' : '저장'}</button>
-            <button onClick={startCoaching}>다시 찍기</button>
+            {tab === 'film' && (
+              <>
+                <div className="chips">
+                  {FILM_ITEMS.map(([k, label]) => (
+                    <button key={k} aria-pressed={filmKey === k} className={filmKey === k ? 'on' : ''} onClick={() => setFilmKey(k)}>
+                      {label}{film[k] > 0 && ` ${Math.round(film[k] * 100)}`}
+                    </button>
+                  ))}
+                </div>
+                <label className="slider">
+                  <span>{FILM_ITEMS.find(([k]) => k === filmKey)[2]} <b>{Math.round(film[filmKey] * 100)}%</b></span>
+                  <input type="range" min="0" max="1" step="0.05" value={film[filmKey]}
+                    onChange={(e) => setFilm((f) => ({ ...f, [filmKey]: Number(e.target.value) }))} />
+                </label>
+                {hasFilm(film) && <button className="text-btn" onClick={() => setFilm(NO_FILM)}>필름 효과 끄기</button>}
+              </>
+            )}
+          </div>
+
+          <div className="dock">
+            <div className="dock-row">
+              <button className="btn ghost" onClick={() => selectShot(!cropToRef)}>
+                {cropToRef ? '전체 사진 보기' : '틀에 맞춰 자르기'}
+              </button>
+              <button className="btn primary" disabled={saving} onClick={() => save(hasEdits)}>
+                {saving ? '저장 준비 중…' : hasEdits ? '보정본 저장' : '저장'}
+              </button>
+            </div>
+            <div className="dock-links">
+              {hasEdits && <button className="text-btn" disabled={saving} onClick={() => save(false)}>원본으로 저장</button>}
+              <button className="text-btn" onClick={goHome}>새 포즈 고르기</button>
+            </div>
           </div>
         </section>
       )}
     </div>
+  )
+}
+
+// 편집 도구 항목 (값의 범위·계산은 adjust.js, film.js)
+const ADJUST_ITEMS = [
+  ['exposure', '노출'], ['brightness', '밝기'], ['contrast', '대비'],
+  ['highlights', '하이라이트'], ['shadows', '그림자'], ['saturation', '채도'],
+]
+const FILM_ITEMS = [ // [키, 칩 이름, 슬라이더 설명]
+  ['grain', '그레인', '그레인 (필름 알갱이)'],
+  ['soft', '소프트', '소프트 포커스 (부드럽게)'],
+  ['vignette', '비네팅', '비네팅 (가장자리 어둡게)'],
+  ['warmth', '따뜻함', '따뜻함 (플래시 느낌)'],
+]
+
+// 안내 중인 관절 → 몸 그림의 부위
+const PART_KIND = {
+  11: 'shoulder', 12: 'shoulder', 23: 'hip', 24: 'hip',
+  13: 'arm', 14: 'arm', 15: 'arm', 16: 'arm', 25: 'leg', 26: 'leg', 27: 'leg', 28: 'leg',
+}
+
+// 멀리서도 "어디를 고칠지" 알 수 있게 작은 몸 그림에 그 부위만 오렌지로 표시 (화면에 보이는 쪽 기준)
+function BodyHint({ part, good }) {
+  const base = good ? 'var(--ok)' : '#fff'
+  const hot = (kind, side) => part && part.kind === kind && (side === undefined || part.side === side)
+  const stroke = (kind, side) => (hot(kind, side) ? 'var(--fix)' : base)
+  const width = (kind, side) => (hot(kind, side) ? 4.5 : 2.5)
+  return (
+    <svg className="body-hint" width="40" height="58" viewBox="0 0 40 58" fill="none" strokeLinecap="round" aria-hidden="true">
+      <circle cx="20" cy="7" r="5" stroke={stroke('head')} strokeWidth={width('head') - 0.5} />
+      <path d="M20 13 V33" stroke={base} strokeWidth="2.5" />
+      <path d="M20 17 L9 29" stroke={stroke('arm', 'l')} strokeWidth={width('arm', 'l')} />
+      <path d="M20 17 L31 29" stroke={stroke('arm', 'r')} strokeWidth={width('arm', 'r')} />
+      <path d="M20 33 L13 54" stroke={stroke('leg', 'l')} strokeWidth={width('leg', 'l')} />
+      <path d="M20 33 L27 54" stroke={stroke('leg', 'r')} strokeWidth={width('leg', 'r')} />
+      {hot('shoulder') && <circle cx={part.side === 'l' ? 14 : 26} cy="17" r="3.5" fill="var(--fix)" />}
+      {hot('hip') && <circle cx={part.side === 'l' ? 16 : 24} cy="33" r="3.5" fill="var(--fix)" />}
+    </svg>
   )
 }
 
@@ -656,7 +757,7 @@ const isHead = (j) => j === 0 || j === MOUTH
 
 // 뼈대: 팔·다리·몸통 선 + 얼굴(코–입) 선. 어깨·골반은 선을 잇기 위해 점도 그림
 const SKELETON = [...BONES, [0, MOUTH]]
-const COLOR = { ok: '#22c55e', bad: '#ef4444', idle: 'rgba(255,255,255,0.85)' }
+const COLOR = { ok: '#6EE7A8', bad: '#F07A2A', idle: 'rgba(255,255,255,0.85)' } // 맞음 초록 · 고칠 곳 오렌지 (밝기 차이가 커서 색약도 구분 쉬움)
 
 // 그리기 기준: 보이는 정도(v)가 0.5 미만이어도 모델이 위치를 짐작해 주므로(가려진 다리 등) 0.1 이상이면 그려서
 // 뼈대가 끊기지 않게 함. 대신 흐리게 그려 "확실하지 않음"을 표시. 판정은 여전히 0.5 이상만 (pose.js의 VIS)
