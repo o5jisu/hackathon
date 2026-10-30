@@ -15,6 +15,8 @@ npm run dev   # https://localhost:5173 , 폰은 같은 와이파이에서 Networ
 
 폰 카메라는 HTTPS에서만 켜지므로 `vite.config.js`에 basic-ssl 플러그인을 넣어 두었다.
 
+포즈 추천 기능은 프로젝트 폴더의 `.env.local`(git에 안 올라감)에 `ANTHROPIC_API_KEY=...`가 있어야 동작한다. 키 이름에 `VITE_`를 붙이면 브라우저 코드에 노출되므로 붙이지 않는다.
+
 ## 코드 구조
 
 | 파일 | 역할 |
@@ -24,6 +26,8 @@ npm run dev   # https://localhost:5173 , 폰은 같은 와이파이에서 Networ
 | `src/film.js` | 필름 질감 효과(applyFilm): 소프트 포커스 → 따뜻함(플래시) → 비네팅 → 그레인 순서, 각 0~1. 결과 화면의 보정 사진(오른쪽)에만 적용, 색감 적용 없이도 사용 가능. Gradia 제안 중 질감 부분만 브라우저 Canvas로 구현(서버·Python 없음) |
 | `src/adjust.js` | 직접 조정(applyAdjust): 노출(±1.5스톱, 선형 공간) → 밝기(중간 톤 감마) → 대비 → 하이라이트·그림자(밝기 50% 기준 위·아래만) → 채도, 각 -1~1 |
 | `src/App.css`, `src/index.css` | 스타일 |
+| `src/pose_recommend/` | 포즈 라이브러리·추천 기능(PRD). `config.js`의 `POSE_RECOMMEND_ENABLED`로 켜고 끔. `index.js` 공개 함수(registerPose·savePose·listPoses·updatePose·deletePose·recommendPose, 추천 검증 `validatePicks`: 없는 id·중복 제외, 40점 미만 버림, 최대 3개), `store.js` IndexedDB(`pose_library`, 사진 Blob 포함), `ai.js` 서버 호출(분석 15초·추천 10초 시간 제한, 취소 가능), `PoseLibrary.jsx` 화면(오류 울타리로 기존 앱과 격리). 고른 포즈는 App의 `loadReference`로 참고 사진이 되어 기존 오버레이·판정을 그대로 씀 |
+| `server/poseRecommendApi.js` | Vite 개발 서버에 끼운 API(`POST /api/poses/analyze`, `/api/poses/recommend`). Claude `claude-haiku-5-5`, structured outputs로 JSON 강제, 형식 오류 시 1회 재시도. 사진은 저장하지 않음. 포즈는 글 정보만 보냄 |
 
 촬영 틀 = 참고 사진: 카메라는 영상 비율 그대로(잘림 없이) 보이고, 참고 사진은 처음엔 가운데에 원래 비율로 가장 크게 놓인다(`.frame`, 바깥은 어둡게). 이후 한 손가락 끌기·두 손가락 확대/축소·설정의 크기 슬라이더로 옮기고 키울 수 있다(`align = {scale, dx, dy}`). 틀 영역은 `pose.js`의 `frameRect`(0~1 비율) 하나로 CSS 위치·관절 좌표(`toFrame`)·촬영 자르기에 똑같이 쓴다. 관절 좌표는 참고 사진 픽셀 좌표계. 관절이 보이는지는 카메라 화면 기준으로 판단하고(틀 밖이어도 판정에 씀), 흔들림 줄이기(`smoothPoints`)는 카메라 0~1 좌표에서 먼저 한 뒤 `toFrame`으로 바꾼다 → 사진 크기를 바꿔도 인식·판정이 그대로. 촬영 시 전체 사진과 틀 영역(카메라 밖 부분 제외)만큼 자른 사진을 둘 다 만들고 기본은 자른 사진.
 
@@ -47,4 +51,4 @@ npm run dev   # https://localhost:5173 , 폰은 같은 와이파이에서 Networ
 
 - 모델 파일은 런타임에 CDN에서 받는다(`pose.js`의 `MODEL_URL`). 오프라인 시연 대비 시 `public/models/`에 넣고 경로 변경.
 - 판정 엄격도는 `pose.js`의 `MATCH_T`(기본 0.3).
-- 사진·영상은 서버로 보내지 않는다(온디바이스 처리).
+- 사진·영상은 서버로 보내지 않는다(온디바이스 처리). 예외: 포즈 추천 기능은 포즈 사진·배경 사진을 Claude API로 보낸다(사용자 결정, 화면에 안내 문구 있음).

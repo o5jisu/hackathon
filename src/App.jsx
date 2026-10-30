@@ -5,6 +5,8 @@ import {
 } from './pose'
 import { NO_FILM, hasFilm, applyFilm } from './film'
 import { NO_ADJUST, hasAdjust, applyAdjust } from './adjust'
+import { POSE_RECOMMEND_ENABLED } from './pose_recommend/config'
+import PoseLibrary from './pose_recommend/PoseLibrary'
 import './App.css'
 
 const NO_ALIGN = { scale: 1, dx: 0, dy: 0 } // 참고 사진 처음 상태: 가운데에 원래 비율로 가장 크게
@@ -12,7 +14,7 @@ const MIN_SCALE = 0.3, MAX_SCALE = 2
 const GOOD_PCT = 90 // 이 점수 이상이면 "거의 맞음": 찍어도 좋다고 안내 (사람이 100%를 맞추기는 어려움)
 
 export default function App() {
-  const [screen, setScreen] = useState('upload') // upload | coaching | captured
+  const [screen, setScreen] = useState('upload') // upload | coaching | captured | library(포즈 라이브러리)
   const [status, setStatus] = useState('AI 모델을 불러오는 중…')
   const [ready, setReady] = useState(false)
   const [refUrl, setRefUrl] = useState(null)
@@ -58,10 +60,14 @@ export default function App() {
       .catch((e) => setStatus('모델 로드 실패: 인터넷 연결을 확인해 주세요. (' + e.message + ')'))
   }, [])
 
-  // 2) 참고 사진 업로드 → 포즈 분석
-  async function onUpload(e) {
+  // 2) 참고 사진 업로드 → 포즈 분석 (포즈 라이브러리에서 고른 사진도 같은 함수로 들어옴)
+  function onUpload(e) {
     const file = e.target.files?.[0]
-    if (!file) return
+    if (file) loadReference(file)
+  }
+
+  async function loadReference(file) {
+    if (!models.current) return setStatus('AI 모델을 아직 불러오는 중이에요. 잠시 후 다시 골라 주세요.')
     if (refUrl) URL.revokeObjectURL(refUrl)
     setStatus('참고 사진의 포즈를 분석하는 중…')
     const url = URL.createObjectURL(file)
@@ -385,7 +391,22 @@ export default function App() {
             코칭 시작
           </button>
           <p className="hint">폰을 세워 두고 2~3m 떨어져 서 주세요.</p>
+          {POSE_RECOMMEND_ENABLED && (
+            <button onClick={() => setScreen('library')}>📚 포즈 라이브러리 · 배경에 맞는 포즈 추천</button>
+          )}
         </section>
+      )}
+
+      {/* 포즈 추천 기능 (src/pose_recommend). 고른 포즈 사진은 참고 사진으로 불러와 기존 오버레이·판정을 그대로 씀 */}
+      {POSE_RECOMMEND_ENABLED && screen === 'library' && (
+        <PoseLibrary
+          detect={(canvas) => models.current?.image.detect(canvas).landmarks?.[0]?.map((l) => [l.x, l.y]) ?? null}
+          onBack={() => setScreen('upload')}
+          onUsePose={(pose) => {
+            setScreen('upload')
+            loadReference(pose.image).catch(() => setStatus('포즈 사진을 불러오지 못했어요.'))
+          }}
+        />
       )}
 
       {screen === 'coaching' && (
