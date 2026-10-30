@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   createLandmarkers, toPixels, toFrame, frameRect, mirror, bodyFrame, normalize, compare, adviceFor,
-  TARGETS, tolOf, HEAD_PTS, BONES, compareHead, headAdvice, MATCH_T, statsOf, matchColor, blendImages, toAnalysisCanvas, smoothPoints,
+  TARGETS, HEAD_PTS, BONES, compareHead, headAdvice, MATCH_T, statsOf, matchColor, blendImages, getSegmenter, skinMaskOf, toAnalysisCanvas, smoothPoints,
 } from './pose'
+import { NO_FILM, hasFilm, applyFilm } from './film'
+import { NO_ADJUST, hasAdjust, applyAdjust } from './adjust'
 import './App.css'
 
 const NO_ALIGN = { scale: 1, dx: 0, dy: 0 } // 참고 사진 처음 상태: 가운데에 원래 비율로 가장 크게
@@ -18,7 +20,10 @@ export default function App() {
   const [score, setScore] = useState(0)
   const [matchedCapture, setMatchedCapture] = useState(null) // 색감 적용 버튼을 누른 뒤 계산한 결과
   const [colorMatchStrength, setColorMatchStrength] = useState(0.7)
+  const [adjust, setAdjust] = useState(NO_ADJUST) // 직접 조정 (노출·밝기·대비·하이라이트·그림자·채도, 각 -1~1)
+  const [keepOriginal, setKeepOriginal] = useState(false) // 저장할 사진: true면 원본, false면 보정본(보정이 있을 때)
   const [busy, setBusy] = useState(false)
+  const [film, setFilm] = useState(NO_FILM) // 필름 질감 효과 (그레인·소프트 포커스·비네팅·따뜻함, 각 0~1)
   const [facing, setFacing] = useState('user') // 'user' = 앞 카메라(거울 화면), 'environment' = 뒤 카메라
   const [canSwitch, setCanSwitch] = useState(false) // 카메라가 2개 이상일 때만 전환 버튼 표시
   const [showGrid, setShowGrid] = useState(true) // 3×3 구도 격자 (촬영 사진에는 안 들어감)
@@ -195,13 +200,13 @@ export default function App() {
         if (!(j in dist)) continue
         total++
         if (dist[j] === null) { state[j] = 'unknown'; hidden++; if (live[j].v === 0) outside++; continue }
+        // dist는 허용 범위 대비 비율 (팔다리: 뼈 각도 30°, 몸통: 위치 15%). 1 미만이면 맞음
         ema[j] = ema[j] === undefined ? dist[j] : ema[j] * 0.6 + dist[j] * 0.4
-        const t = tolOf(j) // 어깨·골반은 15%, 팔다리는 40%
-        if (ema[j] < t) { state[j] = 'ok'; ok++ }
+        if (ema[j] < 1) { state[j] = 'ok'; ok++ }
         else {
           state[j] = 'bad'
-          // 허용 범위 대비 얼마나 벗어났는지로 "가장 많이 틀린 곳"을 고름 (팔다리 기준 척도로 맞춤)
-          const d = (ema[j] / t) * MATCH_T
+          // 허용 범위 대비 얼마나 벗어났는지로 "가장 많이 틀린 곳"을 고름 (머리와 같은 척도로 맞춤)
+          const d = ema[j] * MATCH_T
           if (d > worstD) { worstD = d; worst = j }
         }
       }
@@ -317,24 +322,40 @@ export default function App() {
     putImage(originalRef.current, originalCapture.current.image)
   }, [screen, cropToRef])
 
-  // '참고 사진 색감 적용' 버튼을 눌렀을 때만 색감 계산
-  function applyMatch() {
+  // '참고 사진 색감 적용' 버튼을 눌렀을 때만 색감 계산 (기본 방식: Lab Reinhard)
+  // 사람 전체(얼굴·피부·머리카락·옷)를 찾아 색 통계에서 빼고 보정도 0% → 배경만 참고 사진 분위기로 (분리 모델은 처음 누를 때만 받음)
+  async function applyMatch() {
     setBusy(true)
-    setTimeout(() => { // 화면에 '계산 중'이 먼저 보이도록 한 박자 쉬고 계산
-      const { image, canvas } = originalCapture.current
-      setMatchedCapture(matchColor(image, statsOf(canvas), statsOf(refImg.current)))
-      setBusy(false)
-    }, 30)
+    await new Promise((r) => setTimeout(r, 30)) // 화면에 '계산 중'이 먼저 보이도록 한 박자 쉬고 계산
+    const { image, canvas } = originalCapture.current
+    const seg = await getSegmenter() // 못 받으면 null → 보호 없이 보정
+    let shotMask = null, refMask = null
+    try { shotMask = skinMaskOf(seg, canvas); refMask = skinMaskOf(seg, refImg.current) } catch { /* 보호 없이 진행 */ }
+    setMatchedCapture(matchColor(image, statsOf(canvas, shotMask), statsOf(refImg.current, refMask), shotMask))
+    setKeepOriginal(false)
+    setBusy(false)
   }
 
-  // 보정 미리보기(previewCapture): 슬라이더가 바뀔 때마다 원본 + 보정 결과를 섞어 오른쪽에만 그림
+  // 모든 보정(색감·직접 조정·필름)을 지우고 원본으로
+  function resetEdits() {
+    setMatchedCapture(null); setAdjust(NO_ADJUST); setFilm(NO_FILM); setKeepOriginal(false)
+  }
+
+  // 보정 미리보기(previewCapture): 슬라이더가 바뀔 때마다 원본에서 새로 만들어 오른쪽에만 그림
+  // 원본 → 참고 사진 색감(강도만큼) → 직접 조정 → 필름 효과. 원본은 그대로 둠
+  const hasEdits = matchedCapture !== null || hasAdjust(adjust) || hasFilm(film)
+  const savingEdited = hasEdits && !keepOriginal
   useEffect(() => {
-    if (!matchedCapture) return
-    putImage(previewRef.current, blendImages(originalCapture.current.image, matchedCapture, colorMatchStrength))
-  }, [matchedCapture, colorMatchStrength])
+    if (!hasEdits || !previewRef.current) return
+    let img = originalCapture.current.image
+    if (matchedCapture) img = blendImages(img, matchedCapture, colorMatchStrength)
+    if (hasAdjust(adjust)) img = applyAdjust(img, adjust)
+    if (hasFilm(film)) img = applyFilm(img, film)
+    putImage(previewRef.current, img)
+  }, [hasEdits, matchedCapture, colorMatchStrength, adjust, film, cropToRef])
 
   function save() {
-    const c = matchedCapture ? previewRef.current : originalRef.current
+    const c = savingEdited ? previewRef.current : originalRef.current
     c.toBlob((b) => {
       const a = document.createElement('a')
       a.href = URL.createObjectURL(b); a.download = 'posemate.jpg'; a.click()
@@ -438,34 +459,89 @@ export default function App() {
       {screen === 'captured' && (
         <section className="panel wide">
           <h2>촬영 완료</h2>
-          <div className={matchedCapture ? 'compare' : 'compare single'}>
-            <figure>
+          {/* 원본(왼쪽 고정) · 보정본(오른쪽). 누르면 저장할 사진으로 선택 */}
+          <div className={hasEdits ? 'compare' : 'compare single'}>
+            <figure className={!savingEdited ? 'picked' : ''} onClick={() => setKeepOriginal(true)}>
               <canvas ref={originalRef} className="result" />
-              <figcaption>원본</figcaption>
+              <figcaption>원본 {!savingEdited && '✓'}</figcaption>
             </figure>
-            {matchedCapture && (
-              <figure>
+            {hasEdits && (
+              <figure className={savingEdited ? 'picked' : ''} onClick={() => setKeepOriginal(false)}>
                 <canvas ref={previewRef} className="result" />
-                <figcaption>참고 사진 색감 {Math.round(colorMatchStrength * 100)}%</figcaption>
+                <figcaption>
+                  보정본 {savingEdited && '✓'}
+                  <small>
+                    {[matchedCapture && `색감 ${Math.round(colorMatchStrength * 100)}%`, hasAdjust(adjust) && '직접 조정', hasFilm(film) && '필름 효과']
+                      .filter(Boolean).join(' + ')}
+                  </small>
+                </figcaption>
               </figure>
             )}
           </div>
-          {!matchedCapture && (
-            <button className="primary" disabled={busy} onClick={applyMatch}>
-              {busy ? '색감 계산 중…' : '참고 사진 색감 적용'}
-            </button>
+          {hasEdits && (
+            <div className="methods" role="radiogroup" aria-label="저장할 사진">
+              <button role="radio" aria-checked={!savingEdited} className={!savingEdited ? 'on' : ''} onClick={() => setKeepOriginal(true)}>원본으로 저장</button>
+              <button role="radio" aria-checked={savingEdited} className={savingEdited ? 'on' : ''} onClick={() => setKeepOriginal(false)}>보정본으로 저장</button>
+            </div>
           )}
-          <label className="slider">
-            보정 강도 {matchedCapture ? '' : '(색감 적용 후 사용할 수 있어요)'}
-            <input type="range" min="0" max="1" step="0.05" value={colorMatchStrength}
-              disabled={!matchedCapture}
-              onChange={(e) => setColorMatchStrength(Number(e.target.value))} />
-          </label>
+
+          {/* 참고 사진 색감: 사람(얼굴·피부·머리카락·옷)은 그대로, 배경만 */}
+          <fieldset className="film">
+            <legend>참고 사진 색감</legend>
+            <p className="hint left">얼굴·피부·머리카락·옷은 원래 색 그대로 두고 배경 분위기만 바꿔요.</p>
+            {!matchedCapture ? (
+              <button className="primary" disabled={busy} onClick={applyMatch}>
+                {busy ? '색감 계산 중…' : '참고 사진 색감 적용'}
+              </button>
+            ) : (
+              <>
+                <label className="slider">
+                  강도 {Math.round(colorMatchStrength * 100)}%
+                  <input type="range" min="0" max="1" step="0.05" value={colorMatchStrength}
+                    onChange={(e) => setColorMatchStrength(Number(e.target.value))} />
+                </label>
+                <button onClick={() => setMatchedCapture(null)}>색감 끄기</button>
+              </>
+            )}
+          </fieldset>
+
+          {/* 직접 조정: 카메라·사진 앱처럼 (-100 ~ +100) */}
+          <fieldset className="film">
+            <legend>직접 조정</legend>
+            {[
+              ['exposure', '노출'], ['brightness', '밝기'], ['contrast', '대비'],
+              ['highlights', '하이라이트'], ['shadows', '그림자'], ['saturation', '채도'],
+            ].map(([key, label]) => (
+              <label key={key} className="slider">
+                {label} {adjust[key] > 0 ? '+' : ''}{Math.round(adjust[key] * 100)}
+                <input type="range" min="-1" max="1" step="0.05" value={adjust[key]}
+                  onChange={(e) => { setAdjust((a) => ({ ...a, [key]: Number(e.target.value) })); setKeepOriginal(false) }} />
+              </label>
+            ))}
+            {hasAdjust(adjust) && <button onClick={() => setAdjust(NO_ADJUST)}>조정 초기화</button>}
+          </fieldset>
+          {/* 필름 질감: 보정 사진(오른쪽)에만 적용, 색감 적용 없이도 쓸 수 있음 */}
+          <fieldset className="film">
+            <legend>필름 효과</legend>
+            {[
+              ['grain', '그레인 (필름 알갱이)'],
+              ['soft', '소프트 포커스 (부드럽게)'],
+              ['vignette', '비네팅 (가장자리 어둡게)'],
+              ['warmth', '따뜻함 (플래시 느낌)'],
+            ].map(([key, label]) => (
+              <label key={key} className="slider">
+                {label} {Math.round(film[key] * 100)}%
+                <input type="range" min="0" max="1" step="0.05" value={film[key]}
+                  onChange={(e) => { setFilm((f) => ({ ...f, [key]: Number(e.target.value) })); setKeepOriginal(false) }} />
+              </label>
+            ))}
+            {hasFilm(film) && <button onClick={() => setFilm(NO_FILM)}>필름 효과 끄기</button>}
+          </fieldset>
           <div className="actions">
             <button onClick={() => selectShot(!cropToRef)}>
               {cropToRef ? '자르기 전 전체 사진 보기' : '참고 사진에 맞춰 자르기'}
             </button>
-            {matchedCapture && <button onClick={() => setMatchedCapture(null)}>보정 전으로</button>}
+            {hasEdits && <button onClick={resetEdits}>원본으로 되돌리기</button>}
             <button className="primary" onClick={save}>저장</button>
             <button onClick={startCoaching}>다시 찍기</button>
           </div>

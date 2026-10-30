@@ -27,9 +27,13 @@
 
 ## 조정할 값
 
-- `pose.js`의 `MATCH_T` (기본 0.4): 팔다리 판정 허용 범위, 작을수록 엄격
+- `pose.js`의 `ANG_T` (기본 25°): 팔다리 뼈 방향 각도 허용 범위, `MATCH_T` (기본 0.4): 뼈가 짧게 보일 때 쓰는 위치 허용 범위. 작을수록 엄격
 - `pose.js`의 `HEAD_T` (기본 0.18): 목 기준 코·입 위치 허용 범위, `TORSO_T` (기본 0.15): 어깨·골반 허용 범위. 작을수록 엄격
 
 ## 오프라인 시연 대비
 
-모델 파일 두 개(카메라용 `pose_landmarker_full.task`, 참고 사진용 `pose_landmarker_heavy.task`)를 미리 받아 `public/models/`에 넣고, `pose.js`의 `MODEL_URL`·`HEAVY_MODEL_URL`을 `'/models/파일이름'`으로 바꾸세요.
+모델 파일 두 개(카메라용 `pose_landmarker_full.task`, 참고 사진용 `pose_landmarker_heavy.task`)를 미리 받아 `public/models/`에 넣고, `pose.js`의 `MODEL_URL`·`HEAVY_MODEL_URL`을 (색감 적용의 피부 보호용 `selfie_multiclass_256x256.tflite`도 같이 받아 `SEGMENTER_URL`을) `'/models/파일이름'`으로 바꾸세요.
+
+## 사용한 오픈소스
+
+- [MediaPipe Tasks Vision](https://github.com/google-ai-edge/mediapipe) (Apache-2.0): 포즈 인식, 사람 부위 분리 모델

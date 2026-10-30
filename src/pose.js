@@ -1,5 +1,5 @@
 // 포즈 비교 로직 (화면/React와 무관한 순수 함수 모음)
-import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision'
+import { FilesetResolver, PoseLandmarker, ImageSegmenter } from '@mediapipe/tasks-vision'
 
 const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.0/wasm'
 // 시연 때 네트워크가 불안하면 이 파일을 내려받아 public/models/ 에 넣고 경로를 '/models/pose_landmarker_full.task'로 바꾸세요.
@@ -9,9 +9,17 @@ const MODEL_URL =
 const HEAVY_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task'
 
+// 사람 부위 분리 모델 (배경·머리카락·몸 피부·얼굴 피부·옷·기타, 약 16MB). 색감 적용 버튼을 처음 누를 때만 받음
+const SEGMENTER_URL =
+  'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite'
+
+// MediaPipe 실행 파일(WASM)은 포즈 모델과 분리 모델이 같이 씀 → 한 번만 받음
+let visionP = null
+const getVision = () => (visionP ??= FilesetResolver.forVisionTasks(WASM_URL))
+
 // 참고 사진용(IMAGE)과 카메라용(VIDEO) 모델을 따로 만듭니다. 한 모델은 한 모드만 쓸 수 있기 때문입니다.
 export async function createLandmarkers() {
-  const vision = await FilesetResolver.forVisionTasks(WASM_URL)
+  const vision = await getVision()
   const make = (runningMode, modelAssetPath) =>
     PoseLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath, delegate: 'GPU' },
@@ -132,13 +140,31 @@ export function normalize(pts, f) {
   return pts.map((p) => ({ x: (p.x - f.cx) / f.s, y: (p.y - f.cy) / f.s, v: p.v }))
 }
 
-// 관절별 거리 계산. 결과: { j: 거리 | null(판단 보류) }
+// 팔다리는 뼈의 방향 각도로 비교: 관절 → 그 관절로 이어지는 뼈의 시작점
+// (팔꿈치 ← 어깨: 위팔, 손목 ← 팔꿈치: 아래팔, 무릎 ← 골반: 허벅지, 발목 ← 무릎: 정강이)
+// 위치 거리로만 보면 "허리에 손"과 "손 내림"이 몸통 길이의 30%밖에 차이 안 나서 통과됐음. 각도는 팔이 굽은 방향을 바로 잡음
+const LIMB_FROM = { 13: 11, 15: 13, 14: 12, 16: 14, 25: 23, 27: 25, 26: 24, 28: 26 }
+const ANG_T = 25 // 뼈 방향이 이 각도(도) 이상 다르면 "틀림" (실제 기기에서 조정할 값. 30°는 "주머니에 손" vs "허리에 손"이 통과됨)
+const MIN_BONE = 0.12 // 뼈가 몸통 길이의 12%보다 짧게 보이면(카메라 쪽을 향함) 각도가 불안정해서 위치로 비교
+
+// 관절별 차이. 결과: { j: 허용 범위 대비 비율(1 이상이면 틀림) | null(판단 보류) }
 export function compare(refN, liveN) {
   const out = {}
   for (const j of TARGETS) {
     if (refN[j].v < REF_VIS) continue // 참고 사진에서 안 보이거나 애매한 관절은 비교 안 함
     if (liveN[j].v < VIS) { out[j] = null; continue }
-    out[j] = Math.hypot(refN[j].x - liveN[j].x, refN[j].y - liveN[j].y)
+    const p = LIMB_FROM[j]
+    if (p !== undefined && refN[p].v >= REF_VIS && liveN[p].v >= VIS) {
+      const rx = refN[j].x - refN[p].x, ry = refN[j].y - refN[p].y
+      const lx = liveN[j].x - liveN[p].x, ly = liveN[j].y - liveN[p].y
+      if (Math.min(Math.hypot(rx, ry), Math.hypot(lx, ly)) >= MIN_BONE) {
+        let diff = Math.abs(Math.atan2(ry, rx) - Math.atan2(ly, lx)) * (180 / Math.PI)
+        if (diff > 180) diff = 360 - diff
+        out[j] = diff / ANG_T
+        continue
+      }
+    }
+    out[j] = Math.hypot(refN[j].x - liveN[j].x, refN[j].y - liveN[j].y) / tolOf(j) // 몸통·짧은 뼈는 위치 거리로
   }
   return out
 }
@@ -223,48 +249,106 @@ function labToRgb(L, A, Bv, out) {
   out[2] = toSrgb(Math.max(0, 0.0557 * X - 0.2040 * Y + 1.0570 * Z))
 }
 
+// ── 피부 보호 ──
+// 분리 모델로 피부(얼굴·몸) 영역을 찾아서, 색감 통계에서 빼고 보정도 약하게만 적용 → 얼굴색이 이상해지지 않게
+let segmenterP = null
+export function getSegmenter() {
+  segmenterP ??= getVision()
+    .then((vision) => ImageSegmenter.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: SEGMENTER_URL, delegate: 'GPU' },
+      runningMode: 'IMAGE', outputConfidenceMasks: true, outputCategoryMask: false,
+    }))
+    .catch(() => null) // 모델을 못 받으면(오프라인 등) 피부 보호 없이 보정
+  return segmenterP
+}
+
+// selfie_multiclass 모델의 부위 번호: 0 배경, 1 머리카락, 2 몸 피부, 3 얼굴 피부, 4 옷, 5 기타(소품)
+// 보호 영역 = 배경이 아닌 곳 전부(머리카락·피부·얼굴·옷·소품) → 색감 보정을 전혀 적용하지 않고 배경만 참고 사진 색감으로
+// (머리카락을 빼면 파란 참고 사진에서 머리가 파랗게 물들어서 사람 전체를 보호함)
+const BACKGROUND = 0
+
+// 보호 영역일 확률 지도 { data: 0~1, w, h }. 작게 줄인 사본으로 계산(빠름)하고, 쓸 때 위치 비율로 찾아봄
+export function skinMaskOf(segmenter, img, max = 512) {
+  if (!segmenter) return null
+  const iw = img.naturalWidth ?? img.width, ih = img.naturalHeight ?? img.height
+  const k = Math.min(1, max / Math.max(iw, ih))
+  const c = document.createElement('canvas')
+  c.width = Math.round(iw * k); c.height = Math.round(ih * k)
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
+  let mask = null
+  segmenter.segment(c, (result) => { // 결과는 이 함수 안에서만 유효해서 바로 복사
+    const m = result.confidenceMasks
+    if (!m || !m[BACKGROUND]) return
+    const bg = m[BACKGROUND].getAsFloat32Array()
+    const data = new Float32Array(bg.length)
+    for (let i = 0; i < data.length; i++) data[i] = 1 - bg[i]
+    mask = { data, w: m[BACKGROUND].width, h: m[BACKGROUND].height }
+  })
+  return mask
+}
+
+// x·y가 w×h 그림의 위치일 때, 그 자리의 보호 영역 확률
+// 작은 지도를 큰 사진에 쓰므로 주변 4칸을 거리만큼 섞어 읽음(이중선형 보간) → 경계가 계단처럼 보이지 않음
+function skinAt(mask, x, y, w, h) {
+  if (!mask) return 0
+  const W = mask.w, d = mask.data
+  const fx = Math.min(W - 1, Math.max(0, ((x + 0.5) * W) / w - 0.5))
+  const fy = Math.min(mask.h - 1, Math.max(0, ((y + 0.5) * mask.h) / h - 0.5))
+  const x0 = Math.floor(fx), y0 = Math.floor(fy)
+  const x1 = Math.min(W - 1, x0 + 1), y1 = Math.min(mask.h - 1, y0 + 1)
+  const tx = fx - x0, ty = fy - y0
+  return (d[y0 * W + x0] * (1 - tx) + d[y0 * W + x1] * tx) * (1 - ty) + (d[y1 * W + x0] * (1 - tx) + d[y1 * W + x1] * tx) * ty
+}
+
 // 너무 어둡거나(L < 4) 하얗게 날아간(L > 96) 픽셀은 색 정보가 없어서 통계에서 뺌
 const L_MIN = 4, L_MAX = 96
 
-function labStats(data) {
+// 피부가 아닌 곳(배경·옷·머리카락)의 색 통계. 피부일수록 덜 반영(가중치 1 - 피부 확률)
+function labStats(data, w, h, mask) {
   const sum = [0, 0, 0], sq = [0, 0, 0], all = [0, 0, 0], allSq = [0, 0, 0], lab = [0, 0, 0]
   let n = 0, total = 0
-  for (let i = 0; i < data.length; i += 4) {
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
     rgbToLab(data[i], data[i + 1], data[i + 2], lab)
     total++
     for (let c = 0; c < 3; c++) { all[c] += lab[c]; allSq[c] += lab[c] ** 2 }
     if (lab[0] < L_MIN || lab[0] > L_MAX) continue
-    n++
-    for (let c = 0; c < 3; c++) { sum[c] += lab[c]; sq[c] += lab[c] ** 2 }
+    const wgt = 1 - skinAt(mask, p % w, Math.floor(p / w), w, h)
+    n += wgt
+    for (let c = 0; c < 3; c++) { sum[c] += wgt * lab[c]; sq[c] += wgt * lab[c] ** 2 }
   }
-  // 남은 픽셀이 너무 적으면(거의 검거나 흰 사진) 전체 픽셀로 계산
+  // 남은 픽셀이 너무 적으면(얼굴만 크게 나온 사진, 거의 검거나 흰 사진) 전체 픽셀로 계산
   const [S, Q, N] = n > total * 0.05 ? [sum, sq, n] : [all, allSq, total]
   const mean = S.map((v) => v / N)
   const std = Q.map((q, c) => Math.sqrt(Math.max(q / N - mean[c] ** 2, 1)))
   return { mean, std }
 }
 
-export function statsOf(img) {
+export function statsOf(img, mask = null) {
   const c = document.createElement('canvas')
   const k = 200 / Math.max(img.width, img.height) // 작게 줄여서 빠르게 계산
   c.width = Math.round(img.width * k); c.height = Math.round(img.height * k)
   const ctx = c.getContext('2d')
   ctx.drawImage(img, 0, 0, c.width, c.height)
-  return labStats(ctx.getImageData(0, 0, c.width, c.height).data)
+  return labStats(ctx.getImageData(0, 0, c.width, c.height).data, c.width, c.height, mask)
 }
 
-// 퍼짐(표준편차) 비율은 0.5~2배로 제한 → 참고 사진이 아주 밋밋하거나 강해도 결과가 깨지지 않게
-const clampRatio = (v) => Math.min(2, Math.max(0.5, v))
-
+// 퍼짐(대비·채도) 변화 폭 제한: 밝기 0.7~1.4배, 색(a·b) 0.8~1.25배 → 색이 과하게 튀지 않게
+const RATIO_RANGE = [[0.7, 1.4], [0.8, 1.25], [0.8, 1.25]]
 // '참고 사진 색감 적용' 버튼을 눌렀을 때 한 번만 계산하는 100% 보정 결과 (원본은 건드리지 않음)
-export function matchColor(original, src, ref) {
-  const out = new ImageData(new Uint8ClampedArray(original.data), original.width, original.height)
+// mask가 있으면 보호 영역(사람 전체)은 원래 색 그대로 (경계는 확률만큼 부드럽게 섞임)
+export function matchColor(original, src, ref, mask = null) {
+  const { width: W, height: H } = original
+  const out = new ImageData(new Uint8ClampedArray(original.data), W, H)
   const d = out.data
-  const ratio = [0, 1, 2].map((c) => clampRatio(ref.std[c] / src.std[c]))
+  const ratio = RATIO_RANGE.map(([lo, hi], c) => Math.min(hi, Math.max(lo, ref.std[c] / src.std[c])))
   const lab = [0, 0, 0], rgb = [0, 0, 0]
-  for (let i = 0; i < d.length; i += 4) {
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    const wgt = 1 - skinAt(mask, p % W, Math.floor(p / W), W, H)
     rgbToLab(d[i], d[i + 1], d[i + 2], lab)
-    for (let c = 0; c < 3; c++) lab[c] = (lab[c] - src.mean[c]) * ratio[c] + ref.mean[c]
+    for (let c = 0; c < 3; c++) {
+      const moved = (lab[c] - src.mean[c]) * ratio[c] + ref.mean[c]
+      lab[c] += wgt * (moved - lab[c])
+    }
     labToRgb(lab[0], lab[1], lab[2], rgb)
     d[i] = rgb[0]; d[i + 1] = rgb[1]; d[i + 2] = rgb[2] // Uint8ClampedArray라 0~255로 자동 제한
   }

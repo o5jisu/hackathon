@@ -124,6 +124,21 @@ button:disabled { opacity: 0.4; cursor: default; }
 .dot.ok { background: #22c55e; }
 .dot.bad { background: #ef4444; }
 
+/* 결과 화면: 원본·보정본 선택 */
+.methods { display: flex; gap: 6px; flex-wrap: wrap; }
+.methods button { flex: 1; padding: 8px 10px; font-size: 14px; }
+.methods button.on { background: #111; color: #fff; border-color: #111; }
+/* 저장할 사진으로 고른 쪽에 테두리 */
+.compare figure { cursor: pointer; border: 3px solid transparent; border-radius: 15px; padding: 2px; }
+.compare figure.picked { border-color: #111; }
+.compare figcaption small { display: block; font-weight: 400; color: #888; font-size: 12px; }
+.hint.left { text-align: left; }
+
+/* 결과 화면: 필름 효과 슬라이더 묶음 */
+.film { border: 1px solid #ddd; border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.film legend { font-weight: 700; padding: 0 6px; }
+.film button { align-self: flex-start; padding: 8px 12px; font-size: 14px; }
+
 /* 결과 화면: 원본(왼쪽 고정) · 보정(오른쪽), 좁은 화면에선 위아래 */
 .panel.wide { max-width: 960px; }
 .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
