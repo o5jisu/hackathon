@@ -45,8 +45,8 @@ export const TARGETS = [...TORSO, 13, 14, 15, 16, 25, 26, 27, 28]
 // 머리 판정용 점: 코, 입 왼쪽·오른쪽 끝 (포즈 모델엔 턱이 없어서 입 가운데를 턱 대신 씀)
 const NOSE = 0, MOUTH_L = 9, MOUTH_R = 10
 export const HEAD_PTS = [NOSE, MOUTH_L, MOUTH_R]
-// 머리 허용 범위: 목 기준 코·입 위치 차이가 몸통 길이의 12% 이내면 "맞음" (실제 기기에서 조정할 값)
-const HEAD_T = 0.12
+// 머리 허용 범위: 목 기준 코·입 위치 차이가 몸통 길이의 18% 이내면 "맞음" (실제 기기에서 조정할 값)
+const HEAD_T = 0.18
 // 뼈대 선
 export const BONES = [
   [11, 12], [11, 13], [13, 15], [12, 14], [14, 16],
@@ -62,9 +62,11 @@ const NAME = {
 }
 
 const VIS = 0.5 // 이 값보다 안 보이는 관절은 판단하지 않음
-export const MATCH_T = 0.3 // 몸통 길이의 30% 이내면 "맞음" (실제 기기에서 조정할 값)
-// 어깨·골반은 몸통 가운데 가까이 있어서 움직임 폭이 작음 → 더 좁은 10%로 판정
-const TORSO_T = 0.1
+// 참고 사진은 더 확실한 관절만 판정 (가려진 손·팔처럼 애매한 관절은 찍을 때마다 보였다 안 보였다 해서 점수가 흔들림)
+const REF_VIS = 0.7
+export const MATCH_T = 0.4 // 몸통 길이의 40% 이내면 "맞음" (실제 기기에서 조정할 값)
+// 어깨·골반은 몸통 가운데 가까이 있어서 움직임 폭이 작음 → 더 좁은 15%로 판정
+const TORSO_T = 0.15
 export const tolOf = (j) => (TORSO.includes(j) ? TORSO_T : MATCH_T)
 
 // 0~1 정규화 좌표 → 픽셀 좌표 (가로세로 비율이 다른 사진끼리 비교하기 위해)
@@ -98,16 +100,31 @@ export function mirror(pts, w) {
   })
 }
 
-// 몸통 기준 틀: 중심 = 어깨·엉덩이 4점 평균, 크기 = 어깨 중점~엉덩이 중점 거리
-export function bodyFrame(pts) {
+// 상반신 모드에서 어깨 너비를 몸통 길이로 바꾸는 비율 (테스트 사진 정면 기준 1.0~1.4배의 가운데 값)
+// → 허용 범위(MATCH_T 등)를 전신 모드와 같은 "몸통 길이" 기준으로 쓸 수 있음
+const UPPER_K = 1.35
+
+// 몸통 기준 틀 { cx, cy, s, mode }
+// - 전신(full): 중심 = 어깨·골반 4점 평균, 크기 = 어깨 중점~골반 중점 거리
+// - 상반신(upper): 골반이 안 보이는 사진용. 중심 = 두 어깨 가운데, 크기 = 어깨 너비 × UPPER_K
+// mode를 안 주면 골반이 보이는지로 정함(참고 사진). 카메라는 참고 사진과 같은 mode로 맞춰야 비교가 됨
+export function bodyFrame(pts, mode) {
+  const seen = (i) => pts[i] && pts[i].v >= VIS
+  if (!seen(L_SH) || !seen(R_SH)) return null
+  const hipsSeen = seen(L_HIP) && seen(R_HIP)
+  const m = mode ?? (hipsSeen ? 'full' : 'upper')
+  const shx = (pts[L_SH].x + pts[R_SH].x) / 2, shy = (pts[L_SH].y + pts[R_SH].y) / 2
+  if (m === 'upper') {
+    const s = Math.hypot(pts[L_SH].x - pts[R_SH].x, pts[L_SH].y - pts[R_SH].y) * UPPER_K
+    return s > 1 ? { cx: shx, cy: shy, s, mode: m } : null
+  }
+  if (!hipsSeen) return null
   const core = [L_SH, R_SH, L_HIP, R_HIP].map((i) => pts[i])
-  if (core.some((p) => !p || p.v < VIS)) return null
   const cx = core.reduce((s, p) => s + p.x, 0) / 4
   const cy = core.reduce((s, p) => s + p.y, 0) / 4
-  const shx = (core[0].x + core[1].x) / 2, shy = (core[0].y + core[1].y) / 2
   const hx = (core[2].x + core[3].x) / 2, hy = (core[2].y + core[3].y) / 2
   const s = Math.hypot(shx - hx, shy - hy)
-  return s > 1 ? { cx, cy, s } : null
+  return s > 1 ? { cx, cy, s, mode: m } : null
 }
 
 // 몸통 기준 상대 좌표로 변환 → 거리·위치·몸 크기 차이가 사라짐
@@ -119,7 +136,7 @@ export function normalize(pts, f) {
 export function compare(refN, liveN) {
   const out = {}
   for (const j of TARGETS) {
-    if (refN[j].v < VIS) continue // 참고 사진에서 안 보이는 관절은 비교 안 함
+    if (refN[j].v < REF_VIS) continue // 참고 사진에서 안 보이거나 애매한 관절은 비교 안 함
     if (liveN[j].v < VIS) { out[j] = null; continue }
     out[j] = Math.hypot(refN[j].x - liveN[j].x, refN[j].y - liveN[j].y)
   }
@@ -139,12 +156,14 @@ function headPos(n) {
 // 참고 사진과 내 머리 차이 (참고 - 나). 고개를 숙이거나 들거나 돌리거나 기울이면 코·입 위치가 바뀌는 것으로 판정
 // 반환: undefined = 참고 사진에서 얼굴이 안 보여 비교 안 함, null = 내 얼굴이 안 보여 판단 보류
 // { dx, dy } = 코·입 평균 이동 방향(안내 문구용), err = 코·입 중 큰 차이 / 허용 범위 (1 미만이면 맞음)
+// 코만 보이면 판정하고, 입은 참고·나 모두에서 보일 때만 같이 씀 (손으로 입을 가린 포즈 등)
 export function compareHead(refN, liveN) {
-  const seen = (n) => HEAD_PTS.every((i) => n[i].v >= VIS)
-  if (!seen(refN)) return undefined
-  if (!seen(liveN)) return null
+  if (refN[NOSE].v < REF_VIS) return undefined
+  if (liveN[NOSE].v < VIS) return null
   const r = headPos(refN), l = headPos(liveN)
   const dn = { x: r.nose.x - l.nose.x, y: r.nose.y - l.nose.y }
+  const mouthSeen = [MOUTH_L, MOUTH_R].every((i) => refN[i].v >= REF_VIS && liveN[i].v >= VIS)
+  if (!mouthSeen) return { dx: dn.x, dy: dn.y, err: Math.hypot(dn.x, dn.y) / HEAD_T }
   const dm = { x: r.mouth.x - l.mouth.x, y: r.mouth.y - l.mouth.y }
   return {
     dx: (dn.x + dm.x) / 2,

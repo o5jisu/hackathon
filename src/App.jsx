@@ -7,6 +7,7 @@ import './App.css'
 
 const NO_ALIGN = { scale: 1, dx: 0, dy: 0 } // 참고 사진 처음 상태: 가운데에 원래 비율로 가장 크게
 const MIN_SCALE = 0.3, MAX_SCALE = 2
+const GOOD_PCT = 90 // 이 점수 이상이면 "거의 맞음": 찍어도 좋다고 안내 (사람이 100%를 맞추기는 어려움)
 
 export default function App() {
   const [screen, setScreen] = useState('upload') // upload | coaching | captured
@@ -27,12 +28,14 @@ export default function App() {
   const [videoAspect, setVideoAspect] = useState(9 / 16) // 카메라 영상 가로/세로 비율 (영상이 오면 실제 값으로 바뀜)
   const [align, setAlign] = useState(NO_ALIGN) // 참고 사진 틀 크기·위치 (끌기·두 손가락으로 조절)
   const [cropToRef, setCropToRef] = useState(true) // 촬영 사진을 참고 사진 틀에 맞춰 자를지
+  const [upperBody, setUpperBody] = useState(false) // 상반신 사진이면 업로드 화면에 안내
   const [stream, setStream] = useState(null) // 켜져 있는 카메라 영상
 
   const models = useRef(null)
   const refImg = useRef(null)
   const refPts = useRef(null) // 참고 포즈 (참고 사진 픽셀 좌표 = 틀 좌표) → 화면에 기준점 그릴 때
   const refN = useRef(null) // 참고 포즈 (몸통 기준 상대 좌표) → 판정할 때
+  const refMode = useRef('full') // 참고 사진이 전신('full')인지 상반신('upper')인지. 카메라도 같은 방식으로 맞춤
   const alignRef = useRef(align) // 카메라 루프에서 최신 틀 위치를 읽기 위한 복사본
   useEffect(() => { alignRef.current = align }, [align])
   const touches = useRef({ pts: new Map(), start: null }) // 화면을 누르고 있는 손가락들
@@ -63,15 +66,17 @@ export default function App() {
     const res = models.current.image.detect(toAnalysisCanvas(img))
     const lms = res.landmarks?.[0]
     const pts = lms && toPixels(lms, img.naturalWidth, img.naturalHeight)
-    const f = pts && bodyFrame(pts)
+    const f = pts && bodyFrame(pts) // 골반이 안 보이면 상반신 모드로
     if (!f) {
-      setStatus('사람의 어깨와 골반이 잘 보이는 사진을 골라 주세요.')
+      setStatus('사람의 두 어깨가 잘 보이는 사진을 골라 주세요.')
       setRefUrl(null); refN.current = null
       return
     }
     refImg.current = img
     refPts.current = pts
     refN.current = normalize(pts, f)
+    refMode.current = f.mode
+    setUpperBody(f.mode === 'upper')
     setRefAspect(img.naturalWidth / img.naturalHeight)
     setAlign(NO_ALIGN) // 새 사진은 원래 비율·가장 큰 크기로 시작
     setRefUrl(url)
@@ -173,21 +178,25 @@ export default function App() {
       const cam = toPixels(mirrored ? mirror(lms, 1) : lms, 1, 1) // 카메라 화면 밖 관절은 안 보이는 것으로
       smoothed = smoothPoints(smoothed, cam)
       const live = toFrame(smoothed, r, fw, fh)
-      const f = bodyFrame(live)
-      if (!f) { show('상체가 화면에 보이도록 한 걸음 물러나 주세요', 0); return }
+      const f = bodyFrame(live, refMode.current) // 참고 사진과 같은 방식(전신/상반신)으로
+      if (!f) {
+        show(refMode.current === 'upper' ? '두 어깨가 화면에 보이도록 서 주세요' : '상체가 화면에 보이도록 한 걸음 물러나 주세요', 0)
+        return
+      }
       const liveN = normalize(live, f)
       const ref = refN.current
 
       // 판정은 몸통 기준 정규화 좌표로 (거리·몸 크기 차이 무시) + 흔들림 줄이기(최근 값 가중 평균)
       const dist = compare(ref, liveN)
       const state = {}
-      let ok = 0, total = 0, worst = null, worstD = 0, hidden = 0
+      // hidden = 판단 보류(안 보이는 관절), outside = 그중 카메라 화면 밖으로 나간 관절 (v가 0)
+      let ok = 0, total = 0, worst = null, worstD = 0, hidden = 0, outside = 0
       for (const j of TARGETS) {
         if (!(j in dist)) continue
         total++
-        if (dist[j] === null) { state[j] = 'unknown'; hidden++; continue }
+        if (dist[j] === null) { state[j] = 'unknown'; hidden++; if (live[j].v === 0) outside++; continue }
         ema[j] = ema[j] === undefined ? dist[j] : ema[j] * 0.6 + dist[j] * 0.4
-        const t = tolOf(j) // 어깨·골반은 10%, 팔다리는 30%
+        const t = tolOf(j) // 어깨·골반은 15%, 팔다리는 40%
         if (ema[j] < t) { state[j] = 'ok'; ok++ }
         else {
           state[j] = 'bad'
@@ -202,7 +211,7 @@ export default function App() {
       if (head !== undefined) {
         total++
         let headState = 'unknown'
-        if (head === null) hidden++
+        if (head === null) { hidden++; if (live[0].v === 0) outside++ }
         else {
           for (const k of ['dx', 'dy', 'err']) {
             headEma[k] = headEma[k] === undefined ? head[k] : headEma[k] * 0.6 + head[k] * 0.4
@@ -216,13 +225,19 @@ export default function App() {
         }
         for (const j of [...HEAD_PTS, MOUTH]) state[j] = headState
       }
-      const pct = total ? Math.round((ok / total) * 100) : 0
-      drawLiveSkeleton(ctx, withMouth(live.map(onScreen)), (j) => state[j], total > 0 && ok === total)
+      // 점수는 실제로 판정한 항목(맞음+틀림)만으로 계산. 가려져서 판단 못 한 관절 때문에 100%가 막히지 않게
+      const judged = total - hidden
+      const pct = judged ? Math.round((ok / judged) * 100) : 0
+      drawLiveSkeleton(ctx, withMouth(live.map(onScreen)), (j) => state[j], judged > 0 && pct >= GOOD_PCT)
+      // 다음에 고칠 한 가지: 가장 많이 틀린 곳 → 없으면 화면 밖으로 나간 관절 안내 (가려진 관절은 그냥 넘어감)
+      const tip = worst === 'head' ? headAdvice(headEma, mirrored)
+        : worst !== null ? adviceFor(worst, ref, liveN, mirrored)
+        : outside > 0 ? '전신이 화면에 나오도록 한 걸음 물러나 보세요' : null
       if (total === 0) show('참고 사진에 팔다리가 잘 보이지 않아요', 0)
-      else if (hidden > 0 && worst === null) show('전신이 화면에 나오도록 한 걸음 물러나 보세요', pct)
-      else if (worst === 'head') show(headAdvice(headEma, mirrored), pct)
-      else if (worst !== null) show(adviceFor(worst, ref, liveN, mirrored), pct)
-      else show('좋아요! 셔터 버튼을 눌러 찍어 보세요', 100)
+      else if (judged === 0) show('관절이 잘 보이도록 카메라 앞에 서 주세요', 0)
+      else if (!tip) show('좋아요! 셔터 버튼을 눌러 찍어 보세요', 100)
+      else if (pct >= GOOD_PCT) show(`거의 맞았어요! ${tip}`, pct)
+      else show(tip, pct)
     }
 
     function show(text, pct) {
@@ -327,7 +342,7 @@ export default function App() {
   }
 
   // ── 화면 ──
-  const scoreColor = score >= 100 ? '#22c55e' : score >= 60 ? '#facc15' : '#fff'
+  const scoreColor = score >= GOOD_PCT ? '#22c55e' : score >= 60 ? '#facc15' : '#fff'
   // 참고 사진 틀 위치 (카메라 상자 대비 %). 카메라 루프의 관절 좌표와 같은 frameRect 계산을 씀
   const fr = frameRect(refAspect, videoAspect, align)
   const frameStyle = { left: `${fr.x * 100}%`, top: `${fr.y * 100}%`, width: `${fr.w * 100}%`, height: `${fr.h * 100}%` }
@@ -343,6 +358,7 @@ export default function App() {
             <input type="file" accept="image/*" onChange={onUpload} disabled={!ready} />
           </label>
           {refUrl && <img className="preview" src={refUrl} alt="참고 사진" />}
+          {refUrl && upperBody && <p className="hint">상반신 사진이라 어깨·팔·얼굴만 비교해요.</p>}
           {status && <p className="status">{status}</p>}
           <button className="primary" disabled={!ready || !refN.current} onClick={startCoaching}>
             코칭 시작
@@ -366,9 +382,15 @@ export default function App() {
             <canvas ref={canvasRef} />
           </div>
 
-          {/* 위: 안내 한 줄만 */}
+          {/* 왼쪽 위: 나가기 */}
+          <button className="round glass back" onClick={() => { stopCamera(); setShowSettings(false); setScreen('upload') }} aria-label="나가기">
+            ←
+          </button>
+
+          {/* 위: 점수 + 안내 (최대 2줄) */}
           <div className="topbar">
-            <b style={{ color: scoreColor }}>{score}%</b> {message || '준비 중…'}
+            <b style={{ color: scoreColor }}>{score}%</b>
+            <span>{message || '준비 중…'}</span>
           </div>
 
           {/* 설정: 평소엔 접어 두고 ⚙ 버튼을 누를 때만 펼침 */}
@@ -388,25 +410,27 @@ export default function App() {
               <div className="row">
                 <button onClick={() => setAlign(NO_ALIGN)}>원래 크기로</button>
                 <button onClick={() => setShowGrid((g) => !g)}>{showGrid ? '격자 끄기' : '격자 켜기'}</button>
-                {canSwitch && <button onClick={switchCamera}>{facing === 'user' ? '뒤 카메라' : '앞 카메라'}</button>}
               </div>
               <div className="legend">
                 <span><i className="dot ref" />흰 점선: 참고 사진 포즈</span>
-                <span><i className="dot ok" />초록색: 기준 위치에 가까움 (모두 맞으면 뼈대 전체가 초록)</span>
+                <span><i className="dot ok" />초록색: 기준 위치에 가까움 (90% 이상 맞으면 나머지 뼈대도 초록)</span>
                 <span><i className="dot bad" />빨간색: 위치를 조정해 보세요</span>
               </div>
             </div>
           )}
 
-          {/* 아래: 설정 · 셔터 · 닫기 */}
+          {/* 아래: 설정 · 셔터, 오른쪽 구석에 카메라 전환 */}
           <div className="bottombar">
             <button className="round glass" onClick={() => setShowSettings((v) => !v)} aria-label="설정">
               {showSettings ? '✕' : '⚙'}
             </button>
             <button className="shutter" onClick={capture} aria-label="촬영" />
-            <button className="round glass" onClick={() => { stopCamera(); setShowSettings(false); setScreen('upload') }} aria-label="그만하기">
-              ⏏
-            </button>
+            {canSwitch && (
+              <button className="round glass flip" onClick={switchCamera}
+                aria-label={facing === 'user' ? '뒤 카메라로 전환' : '앞 카메라로 전환'}>
+                ⟲
+              </button>
+            )}
           </div>
         </section>
       )}
@@ -475,7 +499,7 @@ const DRAW_VIS = 0.1, SURE_VIS = 0.5, WEAK_ALPHA = 0.35
 const alphaOf = (...ps) => (ps.every((p) => p.v >= SURE_VIS) ? 1 : WEAK_ALPHA)
 
 // 선 하나의 색: 판정한 끝점 중 하나라도 틀리면 빨강, 판정한 끝점이 모두 맞으면 초록.
-// 어깨·골반도 판정하므로 몸통 선도 초록·빨강으로 바뀜. 판정 전(흰색)인 선은 포즈 전체가 맞을 때만 초록
+// 어깨·골반도 판정하므로 몸통 선도 초록·빨강으로 바뀜. 판정 전(흰색)인 선은 점수가 GOOD_PCT(90%) 이상일 때 초록
 function boneColor(a, b, stateOf, allOk) {
   const s = [stateOf(a), stateOf(b)].filter((x) => x === 'ok' || x === 'bad')
   if (s.includes('bad')) return COLOR.bad
