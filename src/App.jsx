@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   createLandmarkers, toPixels, toFrame, frameRect, mirror, bodyFrame, normalize, compare, adviceFor,
-  TARGETS, HEAD_PTS, BONES, compareHead, headAdvice, MATCH_T, statsOf, matchColor, blendImages, toAnalysisCanvas, smoothPoints,
+  TARGETS, tolOf, HEAD_PTS, BONES, compareHead, headAdvice, MATCH_T, statsOf, matchColor, blendImages, toAnalysisCanvas, smoothPoints,
 } from './pose'
 import './App.css'
 
@@ -187,28 +187,31 @@ export default function App() {
         total++
         if (dist[j] === null) { state[j] = 'unknown'; hidden++; continue }
         ema[j] = ema[j] === undefined ? dist[j] : ema[j] * 0.6 + dist[j] * 0.4
-        if (ema[j] < MATCH_T) { state[j] = 'ok'; ok++ }
-        else { state[j] = 'bad'; if (ema[j] > worstD) { worstD = ema[j]; worst = j } }
+        const t = tolOf(j) // 어깨·골반은 10%, 팔다리는 30%
+        if (ema[j] < t) { state[j] = 'ok'; ok++ }
+        else {
+          state[j] = 'bad'
+          // 허용 범위 대비 얼마나 벗어났는지로 "가장 많이 틀린 곳"을 고름 (팔다리 기준 척도로 맞춤)
+          const d = (ema[j] / t) * MATCH_T
+          if (d > worstD) { worstD = d; worst = j }
+        }
       }
 
-      // 머리 각도 (기울이기·돌리기·숙이기). 값은 허용 범위 대비 비율이라 1 미만이면 맞음
-      const head = compareHead(refPts.current, live)
-      let headAxis = null
+      // 머리: 목 기준 코·입 위치 비교 (숙이기·들기·돌리기·기울이기). err가 1 미만이면 맞음
+      const head = compareHead(ref, liveN)
       if (head !== undefined) {
         total++
         let headState = 'unknown'
         if (head === null) hidden++
         else {
-          let err = 0
-          for (const k of ['roll', 'yaw', 'pitch']) {
+          for (const k of ['dx', 'dy', 'err']) {
             headEma[k] = headEma[k] === undefined ? head[k] : headEma[k] * 0.6 + head[k] * 0.4
-            if (Math.abs(headEma[k]) > err) { err = Math.abs(headEma[k]); headAxis = k }
           }
-          if (err < 1) { headState = 'ok'; ok++ }
+          if (headEma.err < 1) { headState = 'ok'; ok++ }
           else {
             headState = 'bad'
             // 팔다리 거리(MATCH_T 기준)와 같은 척도로 바꿔서 "가장 많이 틀린 곳"을 고름
-            if (err * MATCH_T > worstD) { worstD = err * MATCH_T; worst = 'head' }
+            if (headEma.err * MATCH_T > worstD) { worstD = headEma.err * MATCH_T; worst = 'head' }
           }
         }
         for (const j of [...HEAD_PTS, MOUTH]) state[j] = headState
@@ -217,7 +220,7 @@ export default function App() {
       drawLiveSkeleton(ctx, withMouth(live.map(onScreen)), (j) => state[j], total > 0 && ok === total)
       if (total === 0) show('참고 사진에 팔다리가 잘 보이지 않아요', 0)
       else if (hidden > 0 && worst === null) show('전신이 화면에 나오도록 한 걸음 물러나 보세요', pct)
-      else if (worst === 'head') show(headAdvice(headAxis, headEma[headAxis], mirrored), pct)
+      else if (worst === 'head') show(headAdvice(headEma, mirrored), pct)
       else if (worst !== null) show(adviceFor(worst, ref, liveN, mirrored), pct)
       else show('좋아요! 셔터 버튼을 눌러 찍어 보세요', 100)
     }
@@ -455,7 +458,7 @@ function putImage(canvas, image) {
   canvas.getContext('2d').putImageData(image, 0, 0)
 }
 
-// 얼굴은 화면이 복잡하지 않게 코 + 입 가운데(턱 대신) 2개만 표시. 판정은 귀·눈까지 써서 머리 전체로 함
+// 얼굴은 코 + 입 가운데(턱 대신) 2개만 표시. 판정도 같은 점으로 함 (목 기준 코·입 위치, pose.js의 compareHead)
 // (포즈 모델에는 턱 점이 없어서, 입 양끝 9·10번의 가운데를 33번 점으로 추가)
 const MOUTH = 33
 const withMouth = (ps) => [...ps, { x: (ps[9].x + ps[10].x) / 2, y: (ps[9].y + ps[10].y) / 2, v: Math.min(ps[9].v, ps[10].v) }]
@@ -464,11 +467,15 @@ const isHead = (j) => j === 0 || j === MOUTH
 
 // 뼈대: 팔·다리·몸통 선 + 얼굴(코–입) 선. 어깨·골반은 선을 잇기 위해 점도 그림
 const SKELETON = [...BONES, [0, MOUTH]]
-const TORSO = [11, 12, 23, 24]
 const COLOR = { ok: '#22c55e', bad: '#ef4444', idle: 'rgba(255,255,255,0.85)' }
 
+// 그리기 기준: 보이는 정도(v)가 0.5 미만이어도 모델이 위치를 짐작해 주므로(가려진 다리 등) 0.1 이상이면 그려서
+// 뼈대가 끊기지 않게 함. 대신 흐리게 그려 "확실하지 않음"을 표시. 판정은 여전히 0.5 이상만 (pose.js의 VIS)
+const DRAW_VIS = 0.1, SURE_VIS = 0.5, WEAK_ALPHA = 0.35
+const alphaOf = (...ps) => (ps.every((p) => p.v >= SURE_VIS) ? 1 : WEAK_ALPHA)
+
 // 선 하나의 색: 판정한 끝점 중 하나라도 틀리면 빨강, 판정한 끝점이 모두 맞으면 초록.
-// 어깨·골반끼리 잇는 몸통 선은 판정 대상이 없으므로, 포즈 전체가 맞을 때만 초록
+// 어깨·골반도 판정하므로 몸통 선도 초록·빨강으로 바뀜. 판정 전(흰색)인 선은 포즈 전체가 맞을 때만 초록
 function boneColor(a, b, stateOf, allOk) {
   const s = [stateOf(a), stateOf(b)].filter((x) => x === 'ok' || x === 'bad')
   if (s.includes('bad')) return COLOR.bad
@@ -478,17 +485,19 @@ function boneColor(a, b, stateOf, allOk) {
 
 // 참고 포즈: 흰 점선 뼈대 + 속이 빈 원 (내 뼈대와 구분되도록 얇고 반투명하게)
 function drawRefSkeleton(ctx, pts) {
-  const seen = (j) => pts[j].v >= 0.5
+  const seen = (j) => pts[j].v >= DRAW_VIS
   ctx.save()
   ctx.setLineDash([6, 6]); ctx.lineCap = 'round'
   ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.7)'
   for (const [a, b] of SKELETON) {
     if (!seen(a) || !seen(b)) continue
+    ctx.globalAlpha = alphaOf(pts[a], pts[b])
     ctx.beginPath(); ctx.moveTo(pts[a].x, pts[a].y); ctx.lineTo(pts[b].x, pts[b].y); ctx.stroke()
   }
   ctx.setLineDash([])
-  for (const j of [...DRAWN, ...TORSO]) {
+  for (const j of DRAWN) { // DRAWN에 어깨·골반(TARGETS)도 들어 있음
     if (!seen(j)) continue
+    ctx.globalAlpha = alphaOf(pts[j])
     ctx.beginPath(); ctx.arc(pts[j].x, pts[j].y, isHead(j) ? 5 : 9, 0, Math.PI * 2)
     ctx.lineWidth = 2.5; ctx.stroke()
   }
@@ -497,18 +506,20 @@ function drawRefSkeleton(ctx, pts) {
 
 // 내 포즈: 실선 뼈대 + 꽉 찬 점. 맞으면 초록, 조정이 필요하면 빨강, 판정 전이면 흰색
 function drawLiveSkeleton(ctx, pts, stateOf, allOk) {
-  const seen = (j) => pts[j].v >= 0.5
+  const seen = (j) => pts[j].v >= DRAW_VIS
   const pointColor = (j) => COLOR[stateOf(j)] ?? (allOk ? COLOR.ok : COLOR.idle)
   ctx.save()
   ctx.lineCap = 'round'
   for (const [a, b] of SKELETON) {
     if (!seen(a) || !seen(b)) continue
+    ctx.globalAlpha = alphaOf(pts[a], pts[b])
     ctx.beginPath(); ctx.moveTo(pts[a].x, pts[a].y); ctx.lineTo(pts[b].x, pts[b].y)
     ctx.lineWidth = 7; ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.stroke() // 밝은 배경에서도 보이게 그림자
     ctx.lineWidth = 4; ctx.strokeStyle = boneColor(a, b, stateOf, allOk); ctx.stroke()
   }
-  for (const j of [...DRAWN, ...TORSO]) {
+  for (const j of DRAWN) { // DRAWN에 어깨·골반(TARGETS)도 들어 있음
     if (!seen(j)) continue
+    ctx.globalAlpha = alphaOf(pts[j])
     ctx.beginPath(); ctx.arc(pts[j].x, pts[j].y, isHead(j) ? 3.5 : 6, 0, Math.PI * 2)
     ctx.fillStyle = pointColor(j); ctx.fill()
     ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.stroke()

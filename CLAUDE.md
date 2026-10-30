@@ -19,7 +19,7 @@ npm run dev   # https://localhost:5173 , 폰은 같은 와이파이에서 Networ
 
 | 파일 | 역할 |
 | --- | --- |
-| `src/pose.js` | MediaPipe 모델 로드, 좌표 변환(frameRect/toFrame/toPixels/mirror/bodyFrame/normalize), 관절 비교(compare), 머리 각도 비교(compareHead: 코·눈·귀로 기울이기/돌리기/숙이기, 허용 범위 HEAD_T. 화면에는 코 + 입 가운데(턱 대신, 포즈 모델엔 턱 점이 없음)만 표시), 안내 문장(adviceFor/headAdvice), 색감 보정(statsOf/matchColor/blendImages: Lab 색공간 Reinhard 색 전이, L<4·L>96 픽셀은 통계에서 제외, 퍼짐 비율 0.5~2배 제한) |
+| `src/pose.js` | MediaPipe 모델 로드, 좌표 변환(frameRect/toFrame/toPixels/mirror/bodyFrame/normalize), 관절 비교(compare: 어깨·골반(TORSO, 허용 10%) + 팔꿈치·손목·무릎·발목(허용 MATCH_T 30%), 허용 범위는 tolOf), 머리 비교(compareHead: 목(두 어깨 가운데) 기준 코·입 가운데 위치를 몸통 길이로 비교, 허용 HEAD_T 12%. 귀 사이 거리로 나누던 옛 방식은 고개를 돌리면 값이 튀어서 버림. 포즈 모델엔 턱 점이 없어 입 가운데를 턱 대신 씀), 안내 문장(adviceFor/headAdvice), 색감 보정(statsOf/matchColor/blendImages: Lab 색공간 Reinhard 색 전이, L<4·L>96 픽셀은 통계에서 제외, 퍼짐 비율 0.5~2배 제한) |
 | `src/App.jsx` | 화면 3개(upload → coaching → captured), 카메라 루프(앞·뒤 카메라 전환), 참고 사진 오버레이(투명도 조절), 셔터 촬영, 원본·보정 비교 화면 |
 | `src/App.css`, `src/index.css` | 스타일 |
 
@@ -27,7 +27,7 @@ npm run dev   # https://localhost:5173 , 폰은 같은 와이파이에서 Networ
 
 코칭 화면 UI는 촬영에 방해되지 않게 최소화: 위에 점수+안내 한 줄, 아래에 ⚙ 설정·셔터·나가기. 투명도·크기·격자·카메라 전환·범례는 ⚙ 설정 패널 안에 있다. 화면 테두리 색 표시는 사용자 요청으로 없앴고(다시 넣지 말 것), 상태는 점수 색(흰·노랑·초록)으로 보인다.
 
-관절 표시는 점과 선(뼈대, `BONES` + 코–입 선): 참고 포즈는 흰 점선, 내 포즈는 실선. 판정한 관절이 맞으면 그 점·선이 초록, 틀리면 빨강, 포즈 전체가 맞으면 뼈대 전체가 초록.
+관절 표시는 점과 선(뼈대, `BONES` + 코–입 선): 참고 포즈는 흰 점선, 내 포즈는 실선. 판정한 관절이 맞으면 그 점·선이 초록, 틀리면 빨강, 포즈 전체가 맞으면 뼈대 전체가 초록. 가려진 관절(보이는 정도 0.1~0.5)도 모델이 짐작한 위치에 흐리게 그려서 뼈대가 끊기지 않게 하고(`DRAW_VIS`), 판정은 0.5 이상만 한다.
 
 아이폰: 카메라 영상은 `<video>`가 화면에 생긴 뒤 `useEffect`에서 연결한다(`requestAnimationFrame`으로 연결하면 아이폰에서 검은 화면). 카카오톡 앱 안 브라우저는 카메라가 안 될 수 있어 사파리·크롬으로 연다.
 

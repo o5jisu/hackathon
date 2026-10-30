@@ -39,13 +39,14 @@ export function smoothPoints(prev, pts, a = 0.5) {
 
 // MediaPipe 관절 번호
 const L_SH = 11, R_SH = 12, L_HIP = 23, R_HIP = 24
-// 비교할 관절: 팔꿈치, 손목, 무릎, 발목
-export const TARGETS = [13, 14, 15, 16, 25, 26, 27, 28]
-// 머리 각도용 점: 코, 왼눈, 오른눈, 왼귀, 오른귀
-const NOSE = 0, L_EYE = 2, R_EYE = 5, L_EAR = 7, R_EAR = 8
-export const HEAD_PTS = [NOSE, L_EYE, R_EYE, L_EAR, R_EAR]
-// 머리 각도 허용 범위 (실제 기기에서 조정할 값). 기울기는 도(°), 돌림·숙임은 두 귀 사이 거리 대비 비율
-const HEAD_T = { roll: 20, yaw: 0.3, pitch: 0.3 }
+// 비교할 관절: 어깨·골반(몸통 자세) + 팔꿈치, 손목, 무릎, 발목
+export const TORSO = [L_SH, R_SH, L_HIP, R_HIP]
+export const TARGETS = [...TORSO, 13, 14, 15, 16, 25, 26, 27, 28]
+// 머리 판정용 점: 코, 입 왼쪽·오른쪽 끝 (포즈 모델엔 턱이 없어서 입 가운데를 턱 대신 씀)
+const NOSE = 0, MOUTH_L = 9, MOUTH_R = 10
+export const HEAD_PTS = [NOSE, MOUTH_L, MOUTH_R]
+// 머리 허용 범위: 목 기준 코·입 위치 차이가 몸통 길이의 12% 이내면 "맞음" (실제 기기에서 조정할 값)
+const HEAD_T = 0.12
 // 뼈대 선
 export const BONES = [
   [11, 12], [11, 13], [13, 15], [12, 14], [14, 16],
@@ -55,12 +56,16 @@ export const BONES = [
 const SWAP = { 1: 4, 4: 1, 2: 5, 5: 2, 3: 6, 6: 3, 7: 8, 8: 7, 9: 10, 10: 9, 11: 12, 12: 11, 13: 14, 14: 13, 15: 16, 16: 15, 23: 24, 24: 23, 25: 26, 26: 25, 27: 28, 28: 27 }
 // 안내 문구에 쓸 관절 이름 (사용자 몸 기준)
 const NAME = {
+  11: '왼쪽 어깨를', 12: '오른쪽 어깨를', 23: '왼쪽 골반을', 24: '오른쪽 골반을',
   13: '왼쪽 팔꿈치를', 14: '오른쪽 팔꿈치를', 15: '왼손을', 16: '오른손을',
   25: '왼쪽 무릎을', 26: '오른쪽 무릎을', 27: '왼발을', 28: '오른발을',
 }
 
 const VIS = 0.5 // 이 값보다 안 보이는 관절은 판단하지 않음
 export const MATCH_T = 0.3 // 몸통 길이의 30% 이내면 "맞음" (실제 기기에서 조정할 값)
+// 어깨·골반은 몸통 가운데 가까이 있어서 움직임 폭이 작음 → 더 좁은 10%로 판정
+const TORSO_T = 0.1
+export const tolOf = (j) => (TORSO.includes(j) ? TORSO_T : MATCH_T)
 
 // 0~1 정규화 좌표 → 픽셀 좌표 (가로세로 비율이 다른 사진끼리 비교하기 위해)
 export function toPixels(lms, w, h) {
@@ -121,49 +126,38 @@ export function compare(refN, liveN) {
   return out
 }
 
-// 머리 각도 3가지 (두 점 a·b = 양쪽 귀 또는 양쪽 눈)
-// roll: 두 점을 이은 선의 기울기(도, +면 화면 오른쪽이 내려감)
-// yaw: 코가 두 점의 가운데에서 화면 오른쪽으로 간 정도 / pitch: 코가 두 점을 이은 선보다 아래로 간 정도(+면 숙임)
-function headAngles(pts, a, b) {
-  const A = pts[a], B = pts[b], N = pts[NOSE]
-  let ux = B.x - A.x, uy = B.y - A.y
-  const len = Math.hypot(ux, uy)
-  if (len < 1) return null
-  ux /= len; uy /= len
-  if (ux < 0) { ux = -ux; uy = -uy } // 방향을 항상 화면 오른쪽으로 통일
-  const nx = N.x - (A.x + B.x) / 2, ny = N.y - (A.y + B.y) / 2
+// 목(두 어깨 가운데)에서 본 코·입 가운데 위치. 몸통 기준 정규화 좌표(normalize 결과)에서 계산
+// → 귀 사이 거리로 나누던 예전 방식과 달리, 고개를 옆으로 돌려 귀가 가려져도 값이 튀지 않음
+function headPos(n) {
+  const nx = (n[L_SH].x + n[R_SH].x) / 2, ny = (n[L_SH].y + n[R_SH].y) / 2
   return {
-    roll: (Math.atan2(uy, ux) * 180) / Math.PI,
-    yaw: (nx * ux + ny * uy) / len,
-    pitch: (-nx * uy + ny * ux) / len,
+    nose: { x: n[NOSE].x - nx, y: n[NOSE].y - ny },
+    mouth: { x: (n[MOUTH_L].x + n[MOUTH_R].x) / 2 - nx, y: (n[MOUTH_L].y + n[MOUTH_R].y) / 2 - ny },
   }
 }
 
-// 참고 사진과 내 머리 각도 차이(참고 - 나). 각 값은 허용 범위로 나눠서 1 이상이면 "틀림"
-// 반환: undefined = 참고 사진에서 머리가 안 보여 비교 안 함, null = 내 머리가 안 보여 판단 보류
-// 귀가 둘 다 보이면 귀로, 고개를 돌려 한쪽 귀가 가려지면 눈으로 계산 (참고·나 모두 같은 점으로)
-export function compareHead(refPts, livePts) {
-  const seen = (pts, ...ids) => ids.every((i) => pts[i].v >= VIS)
-  if (!seen(refPts, NOSE) || !(seen(refPts, L_EAR, R_EAR) || seen(refPts, L_EYE, R_EYE))) return undefined
-  // 눈 사이는 귀 사이의 절반쯤이라 같은 비율 기준이면 2배 민감 → 눈일 땐 허용 범위를 2배로
-  const pair = seen(refPts, L_EAR, R_EAR) && seen(livePts, NOSE, L_EAR, R_EAR) ? [L_EAR, R_EAR, 1]
-    : seen(refPts, L_EYE, R_EYE) && seen(livePts, NOSE, L_EYE, R_EYE) ? [L_EYE, R_EYE, 2] : null
-  if (!pair) return null
-  const r = headAngles(refPts, pair[0], pair[1]), l = headAngles(livePts, pair[0], pair[1])
-  if (!r || !l) return null
+// 참고 사진과 내 머리 차이 (참고 - 나). 고개를 숙이거나 들거나 돌리거나 기울이면 코·입 위치가 바뀌는 것으로 판정
+// 반환: undefined = 참고 사진에서 얼굴이 안 보여 비교 안 함, null = 내 얼굴이 안 보여 판단 보류
+// { dx, dy } = 코·입 평균 이동 방향(안내 문구용), err = 코·입 중 큰 차이 / 허용 범위 (1 미만이면 맞음)
+export function compareHead(refN, liveN) {
+  const seen = (n) => HEAD_PTS.every((i) => n[i].v >= VIS)
+  if (!seen(refN)) return undefined
+  if (!seen(liveN)) return null
+  const r = headPos(refN), l = headPos(liveN)
+  const dn = { x: r.nose.x - l.nose.x, y: r.nose.y - l.nose.y }
+  const dm = { x: r.mouth.x - l.mouth.x, y: r.mouth.y - l.mouth.y }
   return {
-    roll: (r.roll - l.roll) / HEAD_T.roll,
-    yaw: (r.yaw - l.yaw) / (HEAD_T.yaw * pair[2]),
-    pitch: (r.pitch - l.pitch) / (HEAD_T.pitch * pair[2]),
+    dx: (dn.x + dm.x) / 2,
+    dy: (dn.y + dm.y) / 2,
+    err: Math.max(Math.hypot(dn.x, dn.y), Math.hypot(dm.x, dm.y)) / HEAD_T,
   }
 }
 
-// 머리 각도 중 가장 많이 틀린 방향 하나에 대한 안내 문장 (사용자 몸 기준 왼쪽/오른쪽, adviceFor와 같은 규칙)
-export function headAdvice(axis, diff, mirrored) {
-  if (axis === 'pitch') return diff > 0 ? '고개를 조금 숙여 보세요' : '턱을 조금 들어 보세요'
-  const toRight = mirrored ? diff > 0 : diff < 0 // diff > 0 이면 화면 오른쪽으로 가야 함
-  const side = toRight ? '오른쪽' : '왼쪽'
-  return axis === 'roll' ? `고개를 ${side}으로 조금 기울여 보세요` : `고개를 ${side}으로 조금 돌려 보세요`
+// 머리 안내 문장 (사용자 몸 기준 왼쪽/오른쪽, adviceFor와 같은 규칙). d = compareHead 결과
+export function headAdvice(d, mirrored) {
+  if (Math.abs(d.dy) >= Math.abs(d.dx)) return d.dy > 0 ? '고개를 조금 숙여 보세요' : '턱을 조금 들어 보세요'
+  const toRight = mirrored ? d.dx > 0 : d.dx < 0 // dx > 0 이면 화면 오른쪽으로 가야 함
+  return `고개를 ${toRight ? '오른쪽' : '왼쪽'}으로 조금 돌려 보세요`
 }
 
 // 가장 많이 틀린 관절 하나에 대한 안내 문장 (사용자 몸 기준 왼쪽/오른쪽)
