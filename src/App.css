@@ -321,3 +321,6 @@
 .panel button.primary { background: var(--ink); color: var(--card); font-weight: 700; }
 .panel button:disabled { opacity: .35; cursor: default; }
 .actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+
+/* 색감 적용 결과 안내 (변화가 작은 이유·오류) */
+.match-note { color: var(--burnt); font-size: 12px; line-height: 1.45; word-break: keep-all; }

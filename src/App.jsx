@@ -19,6 +19,8 @@ const GOOD_PCT = 90 // 이 점수 이상이면 "거의 맞음": 찍어도 좋다
 const TIP_HOLD_MS = 1500 // 안내 문장을 바꾸기 전 최소 유지 시간
 const WORST_KEEP = 0.7 // 안내 중인 관절이 가장 많이 틀린 곳의 70% 이상 틀려 있으면 계속 그 관절을 안내
 const ANALYSIS_MAX = 960 // 포즈 인식에 넣는 카메라 화면의 긴 변 (촬영 사진은 원래 해상도 그대로)
+const SMALL_BACKGROUND = 0.25 // 배경이 사진의 25%보다 적으면 "바뀌는 곳이 적어요" 안내
+const SIMILAR_COLOR = 6 // 두 사진의 Lab 평균 색 차이가 이보다 작으면 "원래 비슷해요" 안내
 const PREVIEW_MAX = 1440 // 결과 화면 미리보기의 긴 변. 슬라이더는 이 크기로 빠르게 계산하고, 저장할 때만 원본 크기로 다시 계산
 
 export default function App() {
@@ -42,6 +44,7 @@ export default function App() {
   const [tab, setTab] = useState('color') // 편집 탭: color | adjust | film
   const [adjustKey, setAdjustKey] = useState('exposure') // 조정 탭에서 고른 항목
   const [filmKey, setFilmKey] = useState('grain') // 필름 탭에서 고른 항목
+  const [matchNote, setMatchNote] = useState('') // 색감 적용 결과 안내 (변화가 작은 이유, 오류)
   const [homePhotos, setHomePhotos] = useState([]) // 첫 화면 폴라로이드에 보여 줄 라이브러리 사진 (최근 3장)
   const [busy, setBusy] = useState(false)
   const [saving, setSaving] = useState(false) // 원래 해상도로 보정을 다시 계산해 저장하는 중
@@ -400,7 +403,7 @@ export default function App() {
     pv.width = Math.max(1, Math.round(c.width * k)); pv.height = Math.max(1, Math.round(c.height * k))
     const pctx = pv.getContext('2d')
     pctx.drawImage(c, 0, 0, pv.width, pv.height)
-    originalCapture.current = { canvas: c, preview: pctx.getImageData(0, 0, pv.width, pv.height) }
+    originalCapture.current = { canvas: c, preview: pctx.getImageData(0, 0, pv.width, pv.height), crop }
     setCropToRef(crop)
     setMatchedCapture(null)
   }
@@ -413,23 +416,41 @@ export default function App() {
 
   // '참고 사진 색감 적용' 버튼을 눌렀을 때만 색감 계산 (기본 방식: Lab Reinhard)
   // 사람 전체(얼굴·피부·머리카락·옷)를 찾아 색 통계에서 빼고 보정도 0% → 배경만 참고 사진 분위기로 (분리 모델은 처음 누를 때만 받음)
+  // 결과 아래에 이유를 알려 줌: 사람이 사진 대부분이거나 두 사진 색감이 비슷하면 변화가 작아서 "안 된 것"처럼 보이기 때문
   async function applyMatch() {
-    setBusy(true)
+    setBusy(true); setMatchNote('')
     await new Promise((r) => setTimeout(r, 30)) // 화면에 '계산 중'이 먼저 보이도록 한 박자 쉬고 계산
-    const { preview, canvas } = originalCapture.current
-    const seg = await getSegmenter() // 못 받으면 null → 보호 없이 보정
-    let shotMask = null, refMask = null
-    try { shotMask = skinMaskOf(seg, canvas); refMask = skinMaskOf(seg, refImg.current) } catch { /* 보호 없이 진행 */ }
-    // 색 통계·보호 지도는 사진 크기와 무관(비율로 읽음) → 저장할 때 원본 크기에도 같은 값으로 다시 적용
-    const src = statsOf(canvas, shotMask), ref = statsOf(refImg.current, refMask)
-    setMatchedCapture({ src, ref, mask: shotMask, preview: matchColor(preview, src, ref, shotMask) })
-    setView('edited')
-    setBusy(false)
+    try {
+      const { preview, canvas, crop } = originalCapture.current
+      const seg = await getSegmenter() // 못 받으면 null → 보호 없이 보정
+      let shotMask = null, refMask = null
+      try { shotMask = skinMaskOf(seg, canvas); refMask = skinMaskOf(seg, refImg.current) } catch { /* 보호 없이 진행 */ }
+      // 색 통계·보호 지도는 사진 크기와 무관(비율로 읽음) → 저장할 때 원본 크기에도 같은 값으로 다시 적용
+      const src = statsOf(canvas, shotMask), ref = statsOf(refImg.current, refMask)
+      setMatchedCapture({ src, ref, mask: shotMask, preview: matchColor(preview, src, ref, shotMask) })
+      setView('edited')
+      const background = shotMask ? 1 - shotMask.data.reduce((s, v) => s + v, 0) / shotMask.data.length : 1
+      const colorGap = Math.hypot(...src.mean.map((m, c) => m - ref.mean[c])) // Lab 평균 색 차이
+      setMatchNote(background < SMALL_BACKGROUND
+        ? `사진의 ${Math.round((1 - background) * 100)}%가 사람이라 바뀌는 곳이 적어요. 사람은 원래 색을 지키고 배경만 바꾸거든요.${crop ? ' "전체 사진"으로 보면 더 잘 보여요.' : ''}`
+        : colorGap < SIMILAR_COLOR ? '참고 사진과 색감이 원래 비슷해서 변화가 작아요.' : '')
+    } catch (e) {
+      setMatchNote('색감을 적용하지 못했어요. 다시 눌러 주세요. (' + e.message + ')')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // 전체 사진 ↔ 틀에 맞춤: 원본이 바뀌므로 색감을 켜 둔 상태였다면 새 원본에 다시 적용
+  function toggleCrop() {
+    const hadColor = matchedCapture !== null
+    selectShot(!cropToRef)
+    if (hadColor) applyMatch()
   }
 
   // 모든 보정(색감·직접 조정·필름)을 지우고 원본으로
   function resetEdits() {
-    setMatchedCapture(null); setColorMatchStrength(0.7); setAdjust(NO_ADJUST); setFilm(NO_FILM); setView('edited')
+    setMatchedCapture(null); setMatchNote(''); setColorMatchStrength(0.7); setAdjust(NO_ADJUST); setFilm(NO_FILM); setView('edited')
   }
 
   // 보정 미리보기: 슬라이더가 바뀔 때마다 원본(미리보기 크기)에서 새로 만들어 그림
@@ -622,7 +643,7 @@ export default function App() {
                   onClick={() => setView(k)}>{label}</button>
               ))}
             </div>
-            <button className="text-btn" onClick={() => selectShot(!cropToRef)}>{cropToRef ? '전체 사진' : '틀에 맞춤'}</button>
+            <button className="text-btn" disabled={busy} onClick={toggleCrop}>{cropToRef ? '전체 사진' : '틀에 맞춤'}</button>
           </div>
 
           <div className="tabs" role="tablist" aria-label="편집 도구">
@@ -647,8 +668,9 @@ export default function App() {
             ) : (
               <ToolSlider label="색감 강도" value={`${Math.round(colorMatchStrength * 100)}%`}
                 min="0" max="1" current={colorMatchStrength} onChange={setColorMatchStrength}
-                resetLabel="끄기" onReset={() => setMatchedCapture(null)} />
+                resetLabel="끄기" onReset={() => { setMatchedCapture(null); setMatchNote('') }} />
             ))}
+            {tab === 'color' && matchNote && <p className="hint left match-note" role="status">{matchNote}</p>}
 
             {tab === 'adjust' && (
               <>
