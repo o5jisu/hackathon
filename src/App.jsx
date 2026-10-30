@@ -9,6 +9,8 @@ import { POSE_RECOMMEND_ENABLED } from './pose_recommend/config'
 import PoseLibrary from './pose_recommend/PoseLibrary'
 import Home from './screens/Home'
 import Reference from './screens/Reference'
+import TabBar from './screens/TabBar'
+import { listPoses } from './pose_recommend'
 import './App.css'
 
 const NO_ALIGN = { scale: 1, dx: 0, dy: 0 } // 참고 사진 처음 상태: 가운데에 원래 비율로 가장 크게
@@ -40,6 +42,7 @@ export default function App() {
   const [tab, setTab] = useState('color') // 편집 탭: color | adjust | film
   const [adjustKey, setAdjustKey] = useState('exposure') // 조정 탭에서 고른 항목
   const [filmKey, setFilmKey] = useState('grain') // 필름 탭에서 고른 항목
+  const [homePhotos, setHomePhotos] = useState([]) // 첫 화면 폴라로이드에 보여 줄 라이브러리 사진 (최근 3장)
   const [busy, setBusy] = useState(false)
   const [saving, setSaving] = useState(false) // 원래 해상도로 보정을 다시 계산해 저장하는 중
   const [film, setFilm] = useState(NO_FILM) // 필름 질감 효과 (그레인·소프트 포커스·비네팅·따뜻함, 각 0~1)
@@ -75,6 +78,18 @@ export default function App() {
       .then((m) => { models.current = m; setReady(true) })
       .catch((e) => setModelError(e.message))
   }, [])
+
+  // 첫 화면에 올 때마다 라이브러리의 최근 사진 3장을 폴라로이드용으로 불러옴 (실패하면 빈 액자)
+  useEffect(() => {
+    if (screen !== 'home' || !POSE_RECOMMEND_ENABLED) return
+    let urls = [], alive = true
+    listPoses().then((ps) => {
+      if (!alive) return
+      urls = ps.slice(-3).reverse().map((p) => URL.createObjectURL(p.image))
+      setHomePhotos(urls)
+    }).catch(() => {})
+    return () => { alive = false; urls.forEach((u) => URL.revokeObjectURL(u)) }
+  }, [screen])
 
   // 2) 참고 사진 → 포즈 분석 → 성공하면 02 참고 사진 확인 화면으로 (포즈 라이브러리에서 고른 사진도 같은 함수로 들어옴)
   // 실패하면 이전 참고 사진은 그대로 두고 지금 화면에 이유를 보여 줌
@@ -460,13 +475,13 @@ export default function App() {
   const shown = holding ? 'original' : view === 'edited' && !hasEdits ? 'original' : view
   const saveEdited = hasEdits && view !== 'original' // 원본을 보고 있으면 원본을 저장
   const goHome = () => { setError(''); setScreen('home') }
+  const tabbed = screen === 'home' || screen === 'library' // 아래 탭 바가 보이는 화면
 
   return (
-    <div className="app">
+    <div className={`app${tabbed ? ' with-tabbar' : ''}`}>
       {screen === 'home' && (
         <Home ready={ready} modelError={modelError} analyzing={analyzing} error={error}
-          onPick={loadReference}
-          onLibrary={POSE_RECOMMEND_ENABLED ? () => { setError(''); setScreen('library') } : null} />
+          onPick={loadReference} photos={homePhotos} />
       )}
 
       {/* 포즈 추천 기능 (src/pose_recommend). 고른 포즈 사진은 참고 사진으로 불러와 기존 오버레이·판정을 그대로 씀 */}
@@ -485,6 +500,11 @@ export default function App() {
         <Reference url={refUrl} size={{ w: refImg.current.naturalWidth, h: refImg.current.naturalHeight }}
           pts={refPts.current} info={refInfo} analyzing={analyzing} error={error}
           onChange={loadReference} onStart={startCoaching} onBack={goHome} />
+      )}
+
+      {tabbed && (
+        <TabBar active={screen === 'library' ? 'library' : 'shoot'} showLibrary={POSE_RECOMMEND_ENABLED}
+          onSelect={(k) => { setError(''); setScreen(k === 'library' ? 'library' : 'home') }} />
       )}
 
       {screen === 'coaching' && (
@@ -591,6 +611,7 @@ export default function App() {
             <canvas ref={originalRef} hidden={shown !== 'original'} />
             <canvas ref={previewRef} hidden={shown !== 'edited'} />
             {shown === 'ref' && <img src={refUrl} alt="참고 사진" draggable={false} />}
+            {hasEdits && !holding && <span className="hold-chip">길게 누르면 원본</span>}
           </div>
 
           {/* 사진 바로 아래 한 줄: 비교 보기 · 자르기 (사진을 가리지 않게 밖으로 뺌) */}

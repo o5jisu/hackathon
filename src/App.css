@@ -59,28 +59,81 @@
 .bar-head h1 { margin: 0; text-align: center; font: 700 18px var(--serif); }
 .bar-head > :last-child { justify-self: end; }
 
-/* ── 01 첫 화면: 로고와 한 줄 소개만, 나머지는 여백 ── */
-.home-head { padding-top: 12dvh; display: flex; flex-direction: column; gap: 6px; }
-.eyebrow { margin: 0; font-size: 11px; letter-spacing: .28em; color: var(--ink2); }
-.logo { margin: 0; font: 600 76px/0.95 var(--serif-en); letter-spacing: -.01em; }
-.logo span { color: var(--burnt); }
-.home-lead { margin: 22px 0 0; font: 500 18px/1.65 var(--serif); color: var(--ink); }
-.steps {
-  margin: 28px 0 0; padding: 14px 0 0; list-style: none; border-top: 1px solid var(--ink);
-  display: flex; gap: 22px; font-size: 13px; color: var(--ink2);
+/* ── 아래 탭 바 (v2, 첫 화면 · 라이브러리) ── */
+.app.with-tabbar { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; max-width: 480px; margin: 0 auto;
+  padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+  display: flex; justify-content: space-around; background: var(--card); border-top: 1px solid var(--line);
 }
-.steps li { display: flex; align-items: baseline; gap: 6px; }
-.steps i { font: italic 500 16px var(--serif-en); color: var(--ink); }
-.text-btn.center { align-self: center; }
+.tabbar button {
+  flex: 1; max-width: 160px; min-height: 52px; border: 0; background: transparent; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  color: var(--ink2); font: 500 11px var(--sans);
+}
+.tabbar button.on { color: var(--ink); font-weight: 700; }
 
-/* ── 02 참고 사진 확인 ── */
-.ref-photo {
-  position: relative; align-self: center; aspect-ratio: var(--ar);
-  width: min(100%, 52dvh * var(--ar)); /* 세로가 긴 사진도 화면 절반 정도 높이까지만 */
-  border: 8px solid var(--card); box-shadow: 0 8px 20px rgba(60, 40, 20, .14); background: var(--sand);
+/* ── 01 첫 화면 (v2): 큰 세리프 제목 + 폴라로이드 콜라주 ── */
+.page.home { min-height: calc(100dvh - 76px - env(safe-area-inset-bottom)); padding-bottom: 20px; gap: 0; }
+.home-top { display: flex; justify-content: space-between; align-items: center; padding-top: 12px; }
+.logo-sm { font: 600 34px/1 var(--serif-en); }
+.logo-sm span, .home-title span { color: var(--burnt); }
+.eyebrow { margin: 0; font-size: 10px; letter-spacing: .22em; color: var(--ink2); }
+.home-title { margin: 30px 0 0; font: 700 36px/1.32 var(--serif); letter-spacing: -.01em; }
+.home-lead { margin: 12px 0 0; font: 400 15px/1.6 var(--sans); color: var(--ink2); }
+.collage { position: relative; height: 262px; margin: 22px 0 6px; }
+.polaroid {
+  position: absolute; margin: 0; padding: 8px 8px 10px; background: #fff;
+  box-shadow: 0 8px 18px rgba(60, 40, 20, .18); display: flex; flex-direction: column; gap: 8px;
 }
-.ref-photo img, .ref-photo svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-.ref-info { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.polaroid img, .polaroid .ph { display: block; width: 100%; flex: 1; min-height: 0; object-fit: cover; }
+.polaroid figcaption { font: italic 500 14px var(--serif-en); color: var(--ink2); }
+.polaroid.p0 { width: 39%; height: 200px; left: 2%; top: 16px; transform: rotate(7deg); }
+.polaroid.p1 { width: 44%; height: 222px; left: 27%; top: 0; transform: rotate(-2deg); z-index: 1; }
+.polaroid.p2 { width: 34%; height: 176px; right: 1%; top: 38px; transform: rotate(-8deg); }
+.p0 .ph { background: #C9B597; } .p1 .ph { background: #D8C6A8; } .p2 .ph { background: #B7A284; }
+.steps {
+  margin: 18px 0 0; padding: 14px 0 0; list-style: none; border-top: 1.5px solid var(--ink);
+  display: flex; flex-wrap: wrap; gap: 8px; font: 500 13px var(--sans); color: var(--ink);
+}
+.steps li { display: flex; align-items: center; gap: 6px; }
+.steps i { font: italic 500 17px var(--serif-en); color: var(--burnt); }
+.steps svg { color: var(--line); margin-left: 4px; }
+.home-actions { margin-top: auto; padding-top: 20px; display: flex; flex-direction: column; gap: 10px; }
+.btn svg { margin-left: 8px; flex: none; }
+
+/* ── 02 참고 사진 확인 (v2): 사진은 위에 꽉 차게, 정보·시작은 아래 시트 ── */
+.reference {
+  position: fixed; inset: 0; max-width: 480px; margin: 0 auto;
+  display: flex; flex-direction: column; background: var(--paper);
+}
+.ref-hero {
+  position: relative; flex: 1 1 auto; min-height: 200px; padding-bottom: 28px; /* 28px = 시트가 덮는 부분 */
+  background: #B9A486; display: flex; align-items: center; justify-content: center; container-type: size;
+}
+.ref-box { position: relative; aspect-ratio: var(--ar); width: min(100cqw, 100cqh * var(--ar)); }
+.ref-box img, .ref-box svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.ref-back { position: absolute; top: max(14px, env(safe-area-inset-top)); left: 16px; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px 0 12px;
+  border-radius: 999px; font: 500 13px var(--sans); cursor: pointer;
+}
+.pill input { display: none; }
+.pill.disabled { opacity: .5; cursor: default; }
+.ref-change { position: absolute; top: max(18px, env(safe-area-inset-top)); right: 16px; }
+.sheet {
+  position: relative; margin-top: -28px; padding: 12px 24px max(24px, env(safe-area-inset-bottom));
+  background: var(--card); border-radius: 28px 28px 0 0; box-shadow: 0 -6px 24px rgba(60, 40, 20, .14);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.handle { align-self: center; width: 40px; height: 4px; border-radius: 2px; background: var(--line); }
+.sheet-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.sheet-title h1 { margin: 0; font: 700 26px var(--serif); }
+.sheet-hint {
+  display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 14px;
+  background: var(--sand); font: 500 14px var(--sans); word-break: keep-all;
+}
+.sheet-hint svg { flex: none; }
 
 /* ── 03 촬영 · 코칭: 검은 바탕, 멀리서 보이게 큰 글씨 ── */
 .stage {
@@ -128,15 +181,16 @@
 .back { position: absolute; top: max(14px, env(safe-area-inset-top)); left: 16px; }
 .gear { position: absolute; top: max(14px, env(safe-area-inset-top)); right: 16px; }
 
-/* 위: 점수 + 진행 막대를 버튼 높이의 한 줄로 (카메라 화면을 덜 가리게) */
+/* 위 (v2): 점수 + 진행 막대를 작은 알약 하나로 (카메라 화면을 덜 가리게) */
 .hud {
-  position: absolute; top: max(14px, env(safe-area-inset-top)); left: 76px; right: 76px; height: 48px;
-  display: flex; align-items: center; justify-content: center; gap: 10px; pointer-events: none;
+  position: absolute; top: calc(max(14px, env(safe-area-inset-top)) + 2px); left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-radius: 999px; pointer-events: none;
+  background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.16);
 }
-.score { display: flex; align-items: baseline; line-height: 1; text-shadow: 0 1px 8px rgba(0,0,0,.7); transition: color .2s; }
-.score b { font-size: 34px; font-weight: 900; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-.score span { font-size: 15px; font-weight: 700; }
-.meter { position: relative; flex: 0 1 120px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.3); }
+.score { display: flex; align-items: baseline; line-height: 1; transition: color .2s; }
+.score b { font-size: 24px; font-weight: 900; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.score span { font-size: 12px; font-weight: 700; }
+.meter { position: relative; flex: 0 0 72px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.3); }
 .meter i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; transition: width .2s, background .2s; }
 .meter .goal { position: absolute; top: -3px; width: 2px; height: 12px; background: #fff; }
 
@@ -177,8 +231,8 @@
 /* 아래: 범례(항상 보임) · 셔터 · 카메라 전환 */
 .bottombar {
   position: absolute; bottom: 0; left: 0; right: 0;
-  padding: 28px 16px max(18px, env(safe-area-inset-bottom));
-  background: linear-gradient(transparent, rgba(0,0,0,.6) 40%);
+  padding: 16px 16px max(18px, env(safe-area-inset-bottom));
+  background: rgba(0,0,0,.5);
   display: flex; flex-direction: column; gap: 14px;
 }
 .legend { display: flex; justify-content: center; gap: 16px; font-size: 12px; color: rgba(255,255,255,.92); }
@@ -205,6 +259,10 @@
 }
 .photo canvas, .photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
 .photo [hidden] { display: none; }
+.hold-chip {
+  position: absolute; right: 12px; bottom: 12px; padding: 6px 10px; border-radius: 999px; pointer-events: none;
+  background: rgba(0,0,0,.45); color: #fff; font: 500 11px var(--sans);
+}
 .photo-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; }
 .compare-toggle { display: flex; padding: 3px; border-radius: 999px; background: var(--sand); }
 .compare-toggle button {

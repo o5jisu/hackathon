@@ -1,10 +1,4 @@
 /* 포즈 라이브러리 화면 (App.css의 .panel · .file · .hint · .status 위에 덧붙임, 색은 index.css의 변수) */
-.pl-head { display: flex; align-items: center; gap: 10px; }
-.pl-head h1 { word-break: keep-all; }
-.panel .pl-back { min-height: 44px; width: 44px; padding: 0; border: 0; font-size: 20px; }
-.pl-box { border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 10px; background: var(--card); }
-.pl-box h2 { margin: 0; font: 700 18px var(--serif); }
-.pl-count { color: var(--ink2); font: 500 14px var(--sans); }
 .pl-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .pl-row .status { flex: 1; }
 
@@ -14,12 +8,6 @@
 }
 @keyframes pl-spin { to { transform: rotate(360deg); } }
 
-.pl-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.panel .pl-tile {
-  padding: 0; border: 0; border-radius: 0; background: transparent; min-height: 0;
-  display: flex; flex-direction: column; gap: 4px; font-size: 13px; text-align: left;
-}
-.pl-tile span { padding: 0 2px; word-break: keep-all; }
 .pl-thumb { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; display: block; background: var(--sand); border: 4px solid #fff; box-shadow: 0 3px 8px rgba(60, 40, 20, .12); }
 
 .pl-results { display: flex; flex-direction: column; gap: 10px; }
@@ -44,3 +32,38 @@
 .pl-facts dd { margin: 0; word-break: keep-all; }
 
 @media (max-width: 400px) { .pl-card { grid-template-columns: 72px 1fr; } .pl-card-img { width: 72px; } }
+
+/* ── v2 라이브러리 목록: 진한 추천 카드 + 엇갈린 2열 격자 + 떠 있는 추가 버튼 ── */
+.page.lib { padding-bottom: 96px; gap: 16px; }
+.lib-head { padding-top: 24px; display: flex; flex-direction: column; gap: 6px; }
+.lib-head h1 { margin: 0; font: 700 30px var(--serif); }
+.rec-card { background: var(--ink); color: var(--card); border-radius: 20px; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+.rec-card h2 { margin: 0; display: flex; align-items: center; gap: 8px; font: 700 18px var(--serif); }
+.rec-card h2 svg { color: var(--fix); flex: none; }
+.rec-card p { margin: 0; font-size: 13px; line-height: 1.5; opacity: .75; word-break: keep-all; }
+.rec-btn {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 18px 0 16px;
+  border-radius: 999px; background: var(--burnt); color: #fff; font: 700 14px var(--sans); cursor: pointer;
+}
+.rec-btn input, .fab input { display: none; }
+.rec-link { min-height: 40px; border: 0; background: transparent; color: var(--card); text-decoration: underline; font: 500 13px var(--sans); cursor: pointer; }
+.rec-error { margin: 0; flex: 1; color: #F6B596; font-size: 13px; }
+.rec-card .pl-spin { border-color: rgba(255, 255, 255, .25); border-top-color: var(--fix); }
+.masonry { columns: 2; column-gap: 12px; }
+.tile {
+  display: block; width: 100%; break-inside: avoid; margin: 0 0 14px; padding: 0; border: 0; background: transparent;
+  text-align: left; cursor: pointer; font: 500 13px var(--sans); color: var(--ink); word-break: keep-all;
+}
+.tile-img { display: block; width: 100%; height: auto; border-radius: 6px; background: var(--sand); margin-bottom: 6px; }
+.fab {
+  position: fixed; z-index: 21; right: max(24px, calc(50% - 240px + 24px)); bottom: calc(76px + 16px + env(safe-area-inset-bottom));
+  display: inline-flex; align-items: center; gap: 6px; min-height: 48px; padding: 0 18px 0 14px; border-radius: 999px;
+  background: var(--ink); color: var(--card); font: 700 14px var(--sans); box-shadow: 0 6px 16px rgba(26, 20, 15, .25); cursor: pointer;
+}
+.fab.disabled { opacity: .5; cursor: default; }
+/* 추천 결과·분석 초안 카드 안의 버튼 (목록 화면은 .panel 밖이라 따로 지정) */
+.lib .pl-card button {
+  min-height: 44px; padding: 0 16px; border-radius: 999px; border: 1.5px solid var(--ink);
+  background: transparent; color: var(--ink); font: 500 15px var(--sans); cursor: pointer;
+}
+.lib .pl-card button.primary { background: var(--ink); color: var(--card); font-weight: 700; }

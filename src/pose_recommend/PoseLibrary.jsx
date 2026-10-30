@@ -36,7 +36,7 @@ export default function PoseLibrary(props) {
   return <Boundary onBack={props.onBack}><Library {...props} /></Boundary>
 }
 
-function Library({ detect, onUsePose, onBack }) {
+function Library({ detect, onUsePose }) {
   const [poses, setPoses] = useState([])
   const [loadError, setLoadError] = useState('')
   const [openId, setOpenId] = useState(null) // 상세 화면으로 연 포즈
@@ -107,70 +107,73 @@ function Library({ detect, onUsePose, onBack }) {
   }
 
   return (
-    <section className="panel">
-      <div className="pl-head">
-        <button className="pl-back" onClick={onBack} aria-label="뒤로">←</button>
-        <h1>포즈 라이브러리</h1>
-      </div>
-      <p className="lead">배경 사진을 찍거나 고르면, 등록한 포즈 중 가장 어울리는 것을 AI가 골라 드려요.</p>
+    <section className="page lib">
+      <header className="lib-head">
+        <h1>라이브러리</h1>
+        <p className="hint left">
+          내 포즈 {poses.length}개{poses.length < RECOMMENDED_COUNT ? ` · ${RECOMMENDED_COUNT}장 이상이면 추천이 더 정확해요` : ''}
+        </p>
+      </header>
 
-      {/* ── 추천 ── */}
-      <div className="pl-box">
-        <h2>배경에 맞는 포즈 추천</h2>
-        {poses.length === 0 ? (
-          <p className="hint left">먼저 아래에서 포즈 사진을 등록해 주세요.</p>
-        ) : rec.state === 'loading' ? (
+      {/* ── 추천 (F3·F4): 진한 카드 ── */}
+      <div className="rec-card">
+        <h2>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /></svg>
+          배경에 맞는 포즈 추천
+        </h2>
+        <p>{poses.length === 0
+          ? '먼저 아래 "포즈 추가"로 따라 하고 싶은 포즈를 등록해 주세요.'
+          : '지금 있는 곳을 찍으면, 등록한 포즈 중 가장 어울리는 걸 골라 드려요.'}</p>
+        {rec.state === 'loading' ? (
           <div className="pl-row">
             <span className="pl-spin" aria-hidden /> <span>배경을 보고 포즈를 고르는 중…</span>
-            <button onClick={() => recAbort.current?.abort()}>취소</button>
+            <button className="rec-link" onClick={() => recAbort.current?.abort()}>취소</button>
           </div>
-        ) : (
-          <label className="file">
-            배경 사진 찍기 / 고르기
+        ) : poses.length > 0 && (
+          <label className="rec-btn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" /></svg>
+            배경 사진 찍기
             <input type="file" accept="image/*" onChange={onBackground} />
           </label>
         )}
         {rec.state === 'error' && (
           <div className="pl-row">
-            <p className="status">{rec.error}</p>
-            <button onClick={() => runRecommend(rec.file)}>다시 시도</button>
+            <p className="rec-error">{rec.error}</p>
+            <button className="rec-link" onClick={() => runRecommend(rec.file)}>다시 시도</button>
           </div>
         )}
-        {rec.state === 'done' && <Results result={rec.result} onUsePose={onUsePose} />}
       </div>
+      {rec.state === 'done' && <Results result={rec.result} onUsePose={onUsePose} />}
 
-      {/* ── 등록 ── */}
-      <div className="pl-box">
-        <h2>내 포즈 <span className="pl-count">{poses.length}개</span></h2>
-        {poses.length < RECOMMENDED_COUNT && (
-          <p className="hint left">포즈를 {RECOMMENDED_COUNT}장 이상 등록하면 더 잘 맞는 추천을 받을 수 있어요.</p>
-        )}
-        {addStatus ? (
-          <div className="pl-row"><span className="pl-spin" aria-hidden /> <span>{addStatus}</span></div>
-        ) : (
-          <label className="file">
-            + 포즈 사진 추가 (여러 장 가능)
-            <input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={onAdd} />
-          </label>
-        )}
-        <p className="hint left">사진은 분석을 위해 AI로 보내지고 서버에 저장되지 않아요. 본인이나 허락받은 사람의 사진만 등록해 주세요.</p>
-        {addErrors.map((m) => <p key={m} className="status">{m}</p>)}
-        {loadError && <p className="status">{loadError}</p>}
+      {/* ── 등록 (F1·F2) ── */}
+      {addStatus && <div className="pl-row"><span className="pl-spin" aria-hidden /> <span>{addStatus}</span></div>}
+      {addErrors.map((m) => <p key={m} className="status">{m}</p>)}
+      {loadError && <p className="status">{loadError}</p>}
+      {drafts.map((d) => (
+        <DraftCard key={d.id} draft={d} onSave={saveDraft}
+          onDiscard={() => setDrafts((all) => all.filter((x) => x.id !== d.id))} />
+      ))}
 
-        {drafts.map((d) => (
-          <DraftCard key={d.id} draft={d} onSave={saveDraft}
-            onDiscard={() => setDrafts((all) => all.filter((x) => x.id !== d.id))} />
-        ))}
-
-        <div className="pl-grid">
+      {/* 핀터레스트처럼 엇갈린 2열 격자 (사진 원래 비율 그대로) */}
+      {poses.length > 0 ? (
+        <div className="masonry">
           {poses.map((p) => (
-            <button key={p.id} className="pl-tile" onClick={() => setOpenId(p.id)}>
-              <Thumb blob={p.image} alt={p.name} />
+            <button key={p.id} className="tile" onClick={() => setOpenId(p.id)}>
+              <Thumb blob={p.image} alt="" className="tile-img" />
               <span>{p.name}</span>
             </button>
           ))}
         </div>
-      </div>
+      ) : !drafts.length && !addStatus && <p className="hint left">아직 등록한 포즈가 없어요.</p>}
+
+      <p className="hint left">사진은 분석을 위해 AI로 보내지고 서버에 저장되지 않아요. 본인이나 허락받은 사람의 사진만 등록해 주세요.</p>
+
+      {/* 떠 있는 추가 버튼 (여러 장 가능) */}
+      <label className={`fab${addStatus ? ' disabled' : ''}`}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+        포즈 추가
+        <input type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={!!addStatus} onChange={onAdd} />
+      </label>
     </section>
   )
 }

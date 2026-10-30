@@ -1,4 +1,4 @@
-// 02 참고 사진 확인: 인식된 뼈대를 사진 위에 보여 주고, 확인 후 코칭 시작
+// 02 참고 사진 확인 (v2): 사진은 위에 꽉 차게(인식된 뼈대 표시), 정보와 시작 버튼은 아래 시트
 import { BONES, REF_VIS } from '../pose'
 
 const SKELETON = [...BONES, [0, 11], [0, 12]] // 코를 두 어깨와 이어 머리 위치를 보여 줌
@@ -14,50 +14,50 @@ export default function Reference({ url, size, pts, info, analyzing, error, onCh
   const sure = (j) => pts[j].v >= REF_VIS // 판정에 쓰는 관절 (흐린 점은 판정에서 빠짐)
   const r = Math.max(w, h) * 0.011
   return (
-    <section className="page reference">
-      <header className="bar-head">
-        <button className="icon-btn" onClick={onBack} aria-label="처음 화면으로">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+    <section className="reference">
+      <div className="ref-hero">
+        {/* 사진 비율 그대로 들어가는 상자: 뼈대 SVG가 사진과 정확히 겹침 */}
+        <div className="ref-box" style={{ '--ar': aspect }}>
+          <img src={url} alt="참고 사진" />
+          <svg viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
+            {SKELETON.filter(([a, b]) => seen(a) && seen(b)).map(([a, b]) => (
+              <line key={`${a}-${b}`} x1={P(a).x} y1={P(a).y} x2={P(b).x} y2={P(b).y}
+                stroke="#FAF5EB" strokeWidth={r * 0.55} strokeDasharray={`${r * 1.3} ${r * 1.1}`} strokeLinecap="round"
+                opacity={sure(a) && sure(b) ? 1 : 0.4} />
+            ))}
+            {DOTS.filter(seen).map((j) => (
+              <circle key={j} cx={P(j).x} cy={P(j).y} r={j === 0 ? r * 1.3 : r}
+                fill="#FAF5EB" stroke="#1A1612" strokeWidth={r * 0.3} opacity={sure(j) ? 1 : 0.4} />
+            ))}
+          </svg>
+        </div>
+        <button className="round glass ref-back" onClick={onBack} aria-label="처음 화면으로">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
         </button>
-        <h1>이 포즈로 찍을게요</h1>
-        <span />
-      </header>
-
-      <div className="ref-photo" style={{ '--ar': aspect }}>
-        <img src={url} alt="참고 사진" />
-        <svg viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
-          {SKELETON.filter(([a, b]) => seen(a) && seen(b)).map(([a, b]) => (
-            <line key={`${a}-${b}`} x1={P(a).x} y1={P(a).y} x2={P(b).x} y2={P(b).y}
-              stroke="#FAF5EB" strokeWidth={r * 0.55} strokeDasharray={`${r * 1.3} ${r * 1.1}`} strokeLinecap="round"
-              opacity={sure(a) && sure(b) ? 1 : 0.4} />
-          ))}
-          {DOTS.filter(seen).map((j) => (
-            <circle key={j} cx={P(j).x} cy={P(j).y} r={j === 0 ? r * 1.3 : r}
-              fill="#FAF5EB" stroke="#1A1612" strokeWidth={r * 0.3} opacity={sure(j) ? 1 : 0.4} />
-          ))}
-        </svg>
-      </div>
-
-      <div className="ref-info">
-        <span className="chip">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true"><path d="M5 12l5 5 9-10" /></svg>
-          {info.mode === 'upper' ? '상반신 포즈' : '전신 포즈'} · 비교할 곳 {info.count}군데 인식
-        </span>
-        <label className={`text-btn${analyzing ? ' disabled' : ''}`}>
+        <label className={`glass pill ref-change${analyzing ? ' disabled' : ''}`}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="9" cy="10" r="2" /><path d="M21 16l-5-5-8 8" /></svg>
           {analyzing ? '읽는 중…' : '사진 바꾸기'}
           <input type="file" accept="image/*" disabled={analyzing}
             onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onChange(f) }} />
         </label>
       </div>
-      <p className="hint left">
-        {info.mode === 'upper' ? '상반신 사진이라 어깨·팔·얼굴만 비교해요. ' : ''}
-        흐린 점은 사진에서 잘 안 보여서 비교하지 않아요.
-      </p>
-      {error && <p className="notice error" role="alert">{error}</p>}
 
-      <div className="dock">
+      <div className="sheet">
+        <span className="handle" aria-hidden="true" />
+        <div className="sheet-title">
+          <h1>{info.mode === 'upper' ? '상반신 포즈' : '전신 포즈'}</h1>
+          <span className="chip">비교 {info.count}곳</span>
+        </div>
+        <p className="hint left">
+          {info.mode === 'upper' ? '상반신 사진이라 어깨·팔·얼굴만 비교해요. ' : ''}
+          흐린 점은 사진에서 잘 안 보여서 비교하지 않아요.
+        </p>
+        <div className="sheet-hint">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="3" width="8" height="14" rx="2" /><path d="M12 21v-4M8 21h8" /></svg>
+          폰을 세워 두고 2~3m 뒤로 물러서 주세요
+        </div>
+        {error && <p className="notice error" role="alert">{error}</p>}
         <button className="btn primary" onClick={onStart} disabled={analyzing}>따라 찍기 시작</button>
-        <p className="hint">폰을 세워 두고 2~3m 뒤로 물러서 주세요</p>
       </div>
     </section>
   )
