@@ -12,6 +12,10 @@ import './App.css'
 const NO_ALIGN = { scale: 1, dx: 0, dy: 0 } // 참고 사진 처음 상태: 가운데에 원래 비율로 가장 크게
 const MIN_SCALE = 0.3, MAX_SCALE = 2
 const GOOD_PCT = 90 // 이 점수 이상이면 "거의 맞음": 찍어도 좋다고 안내 (사람이 100%를 맞추기는 어려움)
+const TIP_HOLD_MS = 1500 // 안내 문장을 바꾸기 전 최소 유지 시간
+const WORST_KEEP = 0.7 // 안내 중인 관절이 가장 많이 틀린 곳의 70% 이상 틀려 있으면 계속 그 관절을 안내
+const ANALYSIS_MAX = 960 // 포즈 인식에 넣는 카메라 화면의 긴 변 (촬영 사진은 원래 해상도 그대로)
+const PREVIEW_MAX = 1440 // 결과 화면 미리보기의 긴 변. 슬라이더는 이 크기로 빠르게 계산하고, 저장할 때만 원본 크기로 다시 계산
 
 export default function App() {
   const [screen, setScreen] = useState('upload') // upload | coaching | captured | library(포즈 라이브러리)
@@ -25,6 +29,7 @@ export default function App() {
   const [adjust, setAdjust] = useState(NO_ADJUST) // 직접 조정 (노출·밝기·대비·하이라이트·그림자·채도, 각 -1~1)
   const [keepOriginal, setKeepOriginal] = useState(false) // 저장할 사진: true면 원본, false면 보정본(보정이 있을 때)
   const [busy, setBusy] = useState(false)
+  const [saving, setSaving] = useState(false) // 원래 해상도로 보정을 다시 계산해 저장하는 중
   const [film, setFilm] = useState(NO_FILM) // 필름 질감 효과 (그레인·소프트 포커스·비네팅·따뜻함, 각 0~1)
   const [facing, setFacing] = useState('user') // 'user' = 앞 카메라(거울 화면), 'environment' = 뒤 카메라
   const [canSwitch, setCanSwitch] = useState(false) // 카메라가 2개 이상일 때만 전환 버튼 표시
@@ -99,7 +104,8 @@ export default function App() {
   async function openCamera(mode) {
     stopCamera()
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: mode, width: { ideal: 1280 }, height: { ideal: 720 } },
+      // 사진 화질을 위해 카메라가 낼 수 있는 가장 큰 해상도에 가깝게 요청 (ideal이라 못 내면 가능한 값으로 켜짐)
+      video: { facingMode: mode, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30 } },
       audio: false,
     })
     setFacing(mode)
@@ -148,6 +154,9 @@ export default function App() {
     const ema = {}
     const headEma = {} // 머리 각도 차이도 같은 방식으로 흔들림 줄이기
     let smoothed = null // 최근 관절 위치 (흔들림 줄이기용)
+    let small = null // 포즈 인식용으로 작게 줄인 카메라 화면 (고해상도 영상을 그대로 넣으면 폰에서 느려짐)
+    let lastWorst = null // 지금 안내 중인 관절 (비슷하게 틀린 관절끼리 안내가 번갈아 바뀌지 않게)
+    let shownText = null, shownAt = 0 // 화면에 띄운 안내와 띄운 시각 (최소 TIP_HOLD_MS 동안 유지)
 
     const loop = () => {
       if (stopped) return
@@ -178,8 +187,18 @@ export default function App() {
       // 참고 사진 속 인물의 관절 위치에 기준점(흰 테두리) 표시 → 사진을 옮기면 같이 움직임
       drawRefSkeleton(ctx, withMouth(refPts.current.map(onScreen)))
 
+      // 인식은 긴 변 ANALYSIS_MAX의 사본으로 (좌표는 0~1 비율이라 크기가 달라도 그대로 씀)
+      let source = video
+      const k = ANALYSIS_MAX / Math.max(W, H)
+      if (k < 1) {
+        small ??= document.createElement('canvas')
+        const sw = Math.round(W * k), sh = Math.round(H * k)
+        if (small.width !== sw || small.height !== sh) { small.width = sw; small.height = sh }
+        small.getContext('2d').drawImage(video, 0, 0, sw, sh)
+        source = small
+      }
       let res
-      try { res = models.current.video.detectForVideo(video, now) }
+      try { res = models.current.video.detectForVideo(source, now) }
       catch (e) { show('포즈 분석 오류: ' + e.message, 0); return } // 폰에서 원인을 바로 볼 수 있게 화면에 표시
       const lms = res.landmarks?.[0]
       if (!lms) { smoothed = null; show('화면 안으로 들어와 주세요', 0); return }
@@ -202,6 +221,7 @@ export default function App() {
       const state = {}
       // hidden = 판단 보류(안 보이는 관절), outside = 그중 카메라 화면 밖으로 나간 관절 (v가 0)
       let ok = 0, total = 0, worst = null, worstD = 0, hidden = 0, outside = 0
+      const badD = {} // 틀린 항목별 벗어난 정도
       for (const j of TARGETS) {
         if (!(j in dist)) continue
         total++
@@ -213,6 +233,7 @@ export default function App() {
           state[j] = 'bad'
           // 허용 범위 대비 얼마나 벗어났는지로 "가장 많이 틀린 곳"을 고름 (머리와 같은 척도로 맞춤)
           const d = ema[j] * MATCH_T
+          badD[j] = d
           if (d > worstD) { worstD = d; worst = j }
         }
       }
@@ -231,11 +252,15 @@ export default function App() {
           else {
             headState = 'bad'
             // 팔다리 거리(MATCH_T 기준)와 같은 척도로 바꿔서 "가장 많이 틀린 곳"을 고름
-            if (headEma.err * MATCH_T > worstD) { worstD = headEma.err * MATCH_T; worst = 'head' }
+            badD.head = headEma.err * MATCH_T
+            if (badD.head > worstD) { worstD = badD.head; worst = 'head' }
           }
         }
         for (const j of [...HEAD_PTS, MOUTH]) state[j] = headState
       }
+      // 안내 중인 관절이 아직 틀렸고 가장 많이 틀린 곳과 차이가 크지 않으면 그대로 안내 (번갈아 바뀌는 것 방지)
+      if (lastWorst !== null && badD[lastWorst] !== undefined && badD[lastWorst] >= worstD * WORST_KEEP) worst = lastWorst
+      lastWorst = worst
       // 점수는 실제로 판정한 항목(맞음+틀림)만으로 계산. 가려져서 판단 못 한 관절 때문에 100%가 막히지 않게
       const judged = total - hidden
       const pct = judged ? Math.round((ok / judged) * 100) : 0
@@ -251,8 +276,13 @@ export default function App() {
       else show(tip, pct)
     }
 
+    // 점수는 매번 바꾸고, 안내 문장은 한 번 띄우면 최소 TIP_HOLD_MS 동안 유지 (멀리서 읽을 시간을 줌)
     function show(text, pct) {
-      setMessage(text); setScore(pct)
+      setScore(pct)
+      const t = performance.now()
+      if (text === shownText || t - shownAt < TIP_HOLD_MS) return
+      shownText = text; shownAt = t
+      setMessage(text)
     }
     raf = requestAnimationFrame(loop)
     return () => { stopped = true; cancelAnimationFrame(raf) }
@@ -308,6 +338,7 @@ export default function App() {
     crop.width = Math.max(1, Math.round(x1 - x0)); crop.height = Math.max(1, Math.round(y1 - y0))
     crop.getContext('2d').drawImage(full, x0, y0, x1 - x0, y1 - y0, 0, 0, crop.width, crop.height)
     shots.current = { full, crop }
+    resetEdits() // 새 사진에는 이전 사진의 보정(색감·직접 조정·필름)을 남기지 않음
     selectShot(true) // 기본: 참고 사진에 맞춰 자른 사진
     setShowSettings(false)
     stopCamera()
@@ -315,9 +346,15 @@ export default function App() {
   }
 
   // 자른 사진 / 전체 사진 중 하나를 원본으로 정함. 원본이 바뀌면 색감 보정은 처음부터 (촬영 직후엔 원본만)
+  // canvas = 원래 해상도(저장용), preview = 긴 변 PREVIEW_MAX로 줄인 사본(화면·슬라이더용)
   function selectShot(crop) {
     const c = crop ? shots.current.crop : shots.current.full
-    originalCapture.current = { image: c.getContext('2d').getImageData(0, 0, c.width, c.height), canvas: c }
+    const k = Math.min(1, PREVIEW_MAX / Math.max(c.width, c.height))
+    const pv = document.createElement('canvas')
+    pv.width = Math.max(1, Math.round(c.width * k)); pv.height = Math.max(1, Math.round(c.height * k))
+    const pctx = pv.getContext('2d')
+    pctx.drawImage(c, 0, 0, pv.width, pv.height)
+    originalCapture.current = { canvas: c, preview: pctx.getImageData(0, 0, pv.width, pv.height) }
     setCropToRef(crop)
     setMatchedCapture(null)
   }
@@ -325,7 +362,7 @@ export default function App() {
   // 6) 결과 화면: 원본은 왼쪽에 고정해서 한 번만 그림 (자르기를 켜고 끄면 다시 그림)
   useEffect(() => {
     if (screen !== 'captured' || !originalCapture.current) return
-    putImage(originalRef.current, originalCapture.current.image)
+    putImage(originalRef.current, originalCapture.current.preview)
   }, [screen, cropToRef])
 
   // '참고 사진 색감 적용' 버튼을 눌렀을 때만 색감 계산 (기본 방식: Lab Reinhard)
@@ -333,18 +370,20 @@ export default function App() {
   async function applyMatch() {
     setBusy(true)
     await new Promise((r) => setTimeout(r, 30)) // 화면에 '계산 중'이 먼저 보이도록 한 박자 쉬고 계산
-    const { image, canvas } = originalCapture.current
+    const { preview, canvas } = originalCapture.current
     const seg = await getSegmenter() // 못 받으면 null → 보호 없이 보정
     let shotMask = null, refMask = null
     try { shotMask = skinMaskOf(seg, canvas); refMask = skinMaskOf(seg, refImg.current) } catch { /* 보호 없이 진행 */ }
-    setMatchedCapture(matchColor(image, statsOf(canvas, shotMask), statsOf(refImg.current, refMask), shotMask))
+    // 색 통계·보호 지도는 사진 크기와 무관(비율로 읽음) → 저장할 때 원본 크기에도 같은 값으로 다시 적용
+    const src = statsOf(canvas, shotMask), ref = statsOf(refImg.current, refMask)
+    setMatchedCapture({ src, ref, mask: shotMask, preview: matchColor(preview, src, ref, shotMask) })
     setKeepOriginal(false)
     setBusy(false)
   }
 
   // 모든 보정(색감·직접 조정·필름)을 지우고 원본으로
   function resetEdits() {
-    setMatchedCapture(null); setAdjust(NO_ADJUST); setFilm(NO_FILM); setKeepOriginal(false)
+    setMatchedCapture(null); setColorMatchStrength(0.7); setAdjust(NO_ADJUST); setFilm(NO_FILM); setKeepOriginal(false)
   }
 
   // 보정 미리보기(previewCapture): 슬라이더가 바뀔 때마다 원본에서 새로 만들어 오른쪽에만 그림
@@ -353,19 +392,32 @@ export default function App() {
   const savingEdited = hasEdits && !keepOriginal
   useEffect(() => {
     if (!hasEdits || !previewRef.current) return
-    let img = originalCapture.current.image
-    if (matchedCapture) img = blendImages(img, matchedCapture, colorMatchStrength)
-    if (hasAdjust(adjust)) img = applyAdjust(img, adjust)
-    if (hasFilm(film)) img = applyFilm(img, film)
-    putImage(previewRef.current, img)
+    putImage(previewRef.current, renderEdits(originalCapture.current.preview, matchedCapture?.preview, colorMatchStrength, adjust, film))
   }, [hasEdits, matchedCapture, colorMatchStrength, adjust, film, cropToRef])
 
-  function save() {
-    const c = savingEdited ? previewRef.current : originalRef.current
-    c.toBlob((b) => {
+  // 저장: 미리보기가 아니라 원래 해상도 사진에 같은 보정을 다시 적용해서 내보냄 (큰 사진은 몇 초 걸릴 수 있음)
+  async function save() {
+    setSaving(true)
+    await new Promise((r) => setTimeout(r, 30)) // '저장 준비 중'이 먼저 보이도록
+    try {
+      const { canvas } = originalCapture.current
+      let out = canvas
+      if (savingEdited) {
+        const full = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height)
+        const m = matchedCapture
+        out = document.createElement('canvas')
+        putImage(out, renderEdits(full, m && matchColor(full, m.src, m.ref, m.mask), colorMatchStrength, adjust, film))
+      }
+      const blob = await new Promise((r) => out.toBlob(r, 'image/jpeg', 0.92))
+      if (!blob) throw new Error('사진을 만들지 못했어요.')
       const a = document.createElement('a')
-      a.href = URL.createObjectURL(b); a.download = 'posemate.jpg'; a.click()
-    }, 'image/jpeg', 0.92)
+      a.href = URL.createObjectURL(blob); a.download = fileName(); a.click()
+      setTimeout(() => URL.revokeObjectURL(a.href), 10_000)
+    } catch (e) {
+      alert('저장하지 못했어요. 사진이 너무 크면 메모리가 부족할 수 있어요. (' + e.message + ')')
+    } finally {
+      setSaving(false)
+    }
   }
 
   // ── 화면 ──
@@ -563,7 +615,7 @@ export default function App() {
               {cropToRef ? '자르기 전 전체 사진 보기' : '참고 사진에 맞춰 자르기'}
             </button>
             {hasEdits && <button onClick={resetEdits}>원본으로 되돌리기</button>}
-            <button className="primary" onClick={save}>저장</button>
+            <button className="primary" disabled={saving} onClick={save}>{saving ? '저장 준비 중…' : '저장'}</button>
             <button onClick={startCoaching}>다시 찍기</button>
           </div>
         </section>
@@ -573,6 +625,22 @@ export default function App() {
 }
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
+
+// 보정 순서: 원본 → 참고 사진 색감(강도 s만큼) → 직접 조정 → 필름 효과. 원본(image)은 바꾸지 않음
+// matched = image와 같은 크기의 100% 색감 결과 (없으면 색감 생략). 미리보기와 저장(원래 해상도)에 같이 씀
+function renderEdits(image, matched, s, adjust, film) {
+  let img = image
+  if (matched) img = blendImages(img, matched, s)
+  if (hasAdjust(adjust)) img = applyAdjust(img, adjust)
+  if (hasFilm(film)) img = applyFilm(img, film)
+  return img
+}
+
+// 저장 파일 이름: Motif_2026-10-31_143205.jpg (여러 번 저장해도 이름이 겹치지 않게 날짜·시각)
+function fileName() {
+  const d = new Date(), p = (n) => String(n).padStart(2, '0')
+  return `Motif_${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.jpg`
+}
 
 function putImage(canvas, image) {
   canvas.width = image.width; canvas.height = image.height

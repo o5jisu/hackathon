@@ -205,12 +205,25 @@ export function headAdvice(d, mirrored) {
   return `고개를 ${toRight ? '오른쪽' : '왼쪽'}으로 조금 돌려 보세요`
 }
 
+// 관절 j가 가야 할 위치. 팔다리는 compare와 같은 기준(뼈 방향)으로: 내 뼈 시작점에서 참고 사진의 뼈 방향으로
+// 내 뼈 길이만큼 간 곳. 참고 사진의 관절 위치를 그대로 쓰면 팔꿈치가 틀렸을 때 손목 안내가 엉뚱한 쪽을 가리켰음
+function goalOf(j, refN, liveN) {
+  const p = LIMB_FROM[j]
+  if (p !== undefined && refN[p].v >= REF_VIS && liveN[p].v >= VIS) {
+    const rx = refN[j].x - refN[p].x, ry = refN[j].y - refN[p].y
+    const rl = Math.hypot(rx, ry), ll = Math.hypot(liveN[j].x - liveN[p].x, liveN[j].y - liveN[p].y)
+    if (Math.min(rl, ll) >= MIN_BONE) return { x: liveN[p].x + (rx / rl) * ll, y: liveN[p].y + (ry / rl) * ll }
+  }
+  return refN[j] // 몸통·짧은 뼈는 compare처럼 위치로
+}
+
 // 가장 많이 틀린 관절 하나에 대한 안내 문장 (사용자 몸 기준 왼쪽/오른쪽)
 // mirrored=true(앞 카메라): live는 mirror()로 좌우 번호가 바뀌어 있고, 화면 오른쪽 = 사용자 오른쪽
 // mirrored=false(뒤 카메라): 카메라를 마주 보고 있으므로 화면 오른쪽 = 사용자 왼쪽
 export function adviceFor(j, refN, liveN, mirrored) {
-  const dx = refN[j].x - liveN[j].x
-  const dy = refN[j].y - liveN[j].y
+  const goal = goalOf(j, refN, liveN)
+  const dx = goal.x - liveN[j].x
+  const dy = goal.y - liveN[j].y
   const name = NAME[mirrored ? SWAP[j] : j]
   const toRight = mirrored ? dx > 0 : dx < 0
   let action
