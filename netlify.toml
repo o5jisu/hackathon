@@ -1,0 +1,4 @@
+# Netlify 배포 설정: npm run build로 dist를 만들어 올리고, 서버 함수는 netlify/functions에 있음
+[build]
+  command = "npm run build"
+  publish = "dist"

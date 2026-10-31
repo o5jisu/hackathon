@@ -1,10 +1,25 @@
-// AiProvider: 같은 개발 서버의 /api/poses/* 를 부릅니다 (API 키는 서버에만 있음, server/poseRecommendApi.js).
+// AiProvider: 같은 서버의 /api/poses/* 를 부릅니다 (API 키는 서버에만 있음. 개발: server/poseRecommendApi.js, 배포: netlify/functions/poses.mjs).
 // 다른 AI(Gemini 등)로 바꾸려면 이 파일의 두 함수만 같은 모양으로 다시 만들면 됩니다.
 import { ANALYZE_TIMEOUT_MS, RECOMMEND_TIMEOUT_MS } from './config'
 
 export class TimeoutError extends Error {}
 
-async function post(path, body, { signal, timeout }) {
+// 배포판은 아무나 API 요금을 쓰지 못하게 시연 코드를 받음. 한 번 맞히면 이 폰에 기억
+const CODE_KEY = 'motif_demo_code'
+const savedCode = () => { try { return localStorage.getItem(CODE_KEY) || '' } catch { return '' } }
+const saveCode = (c) => { try { localStorage.setItem(CODE_KEY, c) } catch { /* 저장 못 해도 이번 요청은 진행 */ } }
+
+async function post(path, body, opts, retried = false) {
+  const { status, data } = await send(path, body, opts)
+  if (status === 401 && !retried) {
+    const code = window.prompt('포즈 추천은 시연 코드가 필요해요. 코드를 입력해 주세요.')
+    if (code) { saveCode(code.trim()); return post(path, body, opts, true) }
+  }
+  if (status !== 200) throw new Error(data.error || `서버 오류 (${status})`)
+  return data
+}
+
+async function send(path, body, { signal, timeout }) {
   // 사용자가 누른 취소(signal)와 시간 초과(timeout) 둘 중 먼저 오는 것으로 요청을 멈춤
   const stop = new AbortController()
   let timedOut = false
@@ -14,13 +29,11 @@ async function post(path, body, { signal, timeout }) {
   try {
     const res = await fetch(path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Demo-Code': savedCode() },
       body: JSON.stringify(body),
       signal: stop.signal,
     })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data.error || `서버 오류 (${res.status})`)
-    return data
+    return { status: res.status, data: await res.json().catch(() => ({})) }
   } catch (e) {
     if (timedOut) throw new TimeoutError('응답이 너무 오래 걸려요. 다시 시도해 주세요.')
     if (e.name === 'AbortError') throw e // 사용자가 취소

@@ -17,6 +17,8 @@ npm run dev   # https://localhost:5173 , 폰은 같은 와이파이에서 Networ
 
 포즈 추천 기능은 프로젝트 폴더의 `.env.local`(git에 안 올라감)에 `ANTHROPIC_API_KEY=...`가 있어야 동작한다. 키 이름에 `VITE_`를 붙이면 브라우저 코드에 노출되므로 붙이지 않는다.
 
+배포(와이파이 없이 어디서나): Netlify 사이트 `motif-posemate` → https://motif-posemate.netlify.app . Git과 연결돼 있지 않아서 push로는 안 바뀌고, `npx netlify-cli deploy --prod`로 직접 올린다(빌드 포함). 폰에서 '홈 화면에 추가'하면 앱처럼 열린다(`public/manifest.webmanifest`, 아이콘 `public/icon*.png`·`apple-touch-icon.png`, 원본 `public/icon.svg`). 배포판 API는 `netlify/functions/poses.mjs`(같은 IP 1분 20회 제한), 처리 내용은 개발 서버와 같은 `server/poseCore.js`. Netlify 환경 변수: `ANTHROPIC_API_KEY`(비밀), `DEMO_CODE`(시연 코드, 포즈 추천을 처음 쓸 때 입력 → 폰 localStorage에 기억, `.env.local`에 넣으면 개발 서버도 검사).
+
 ## 코드 구조
 
 | 파일 | 역할 |
@@ -30,7 +32,7 @@ npm run dev   # https://localhost:5173 , 폰은 같은 와이파이에서 Networ
 | `src/adjust.js` | 직접 조정(applyAdjust): 노출(±1.5스톱, 선형 공간) → 밝기(중간 톤 감마) → 대비 → 하이라이트·그림자(밝기 50% 기준 위·아래만) → 채도, 각 -1~1 |
 | `src/App.css`, `src/index.css` | 스타일. 디자인 시스템(Motif.): `index.css`의 `:root` 변수(Paper #F2EADB, Card #FAF5EB, Sand #E4D5BE, Ink #1A1612, Ink2 #5E5346, Burnt #B4521E, 촬영 화면 맞음 #6EE7A8 · 고칠 곳 #F07A2A). 제목 세리프(Cormorant Garamond·Noto Serif KR), 본문 Noto Sans KR(`index.html`의 구글 폰트) |
 | `src/pose_recommend/` | 포즈 라이브러리·추천 기능(PRD). 목록 화면(v2): 제목·포즈 수 → 진한 추천 카드(배경 사진 찍기) → 엇갈린 2열 격자(`.masonry`, 사진 원래 비율) → 떠 있는 "포즈 추가" 버튼(`.fab`). `config.js`의 `POSE_RECOMMEND_ENABLED`로 켜고 끔. `index.js` 공개 함수(registerPose·savePose·listPoses·updatePose·deletePose·recommendPose, 추천 검증 `validatePicks`: 없는 id·중복 제외, 40점 미만 버림, 최대 3개), `store.js` IndexedDB(`pose_library`, 사진 Blob 포함), `ai.js` 서버 호출(분석 15초·추천 10초 시간 제한, 취소 가능), `PoseLibrary.jsx` 화면(오류 울타리로 기존 앱과 격리). 고른 포즈는 App의 `loadReference`로 참고 사진이 되어 기존 오버레이·판정을 그대로 씀 |
-| `server/poseRecommendApi.js` | Vite 개발 서버에 끼운 API(`POST /api/poses/analyze`, `/api/poses/recommend`). Claude `claude-haiku-5-5`, structured outputs로 JSON 강제, 형식 오류 시 1회 재시도. 사진은 저장하지 않음. 포즈는 글 정보만 보냄 |
+| `server/poseCore.js`, `server/poseRecommendApi.js`, `netlify/functions/poses.mjs` | 포즈 추천 API. 핵심은 poseCore, 개발 서버 플러그인과 Netlify 함수가 같이 씀. 시연 코드(`DEMO_CODE`, 헤더 `X-Demo-Code`) 검사. 개발 서버에 끼운 API(`POST /api/poses/analyze`, `/api/poses/recommend`). Claude `claude-haiku-5-5`, structured outputs로 JSON 강제, 형식 오류 시 1회 재시도. 사진은 저장하지 않음. 포즈는 글 정보만 보냄 |
 
 촬영 틀 = 참고 사진: 카메라는 영상 비율 그대로(잘림 없이) 보이고, 참고 사진은 처음엔 가운데에 원래 비율로 가장 크게 놓인다(`.frame`, 바깥은 어둡게). 이후 한 손가락 끌기·두 손가락 확대/축소·설정의 크기 슬라이더로 옮기고 키울 수 있다(`align = {scale, dx, dy}`). 틀 영역은 `pose.js`의 `frameRect`(0~1 비율) 하나로 CSS 위치·관절 좌표(`toFrame`)·촬영 자르기에 똑같이 쓴다. 관절 좌표는 참고 사진 픽셀 좌표계. 관절이 보이는지는 카메라 화면 기준으로 판단하고(틀 밖이어도 판정에 씀), 흔들림 줄이기(`smoothPoints`)는 카메라 0~1 좌표에서 먼저 한 뒤 `toFrame`으로 바꾼다 → 사진 크기를 바꿔도 인식·판정이 그대로. 촬영 시 전체 사진과 틀 영역(카메라 밖 부분 제외)만큼 자른 사진을 둘 다 만들고 기본은 자른 사진.
 
